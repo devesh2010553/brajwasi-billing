@@ -1,32 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Daily Entry</title>
+    <title>Vehicle Entry</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<div class="container">
-    <form method="post">
-        <h2>Daily Entry for {{ car }}</h2>
-
-        <input name="opening" placeholder="Opening KM" required type="number">
-        <input name="closing" placeholder="Closing KM" required type="number">
-
-        <label>Start Time</label>
-        <input name="start" required type="time">
-
-        <label>End Time</label>
-        <input name="end" required type="time">
-
-        <button>Save</button>
-
-        {% if msg %}
-        <p class="{{ cls }}">{{ msg }}</p>
-        {% endif %}
-    </form>
-    <p style="text-align:center;"><a href="/logout">Logout</a></p>
-</div>
+<form method="post">
+    <h3>Daily Entry for {{ car }}</h3>
+    <input name="opening" placeholder="Opening KM" required type="number">
+    <input name="closing" placeholder="Closing KM" required type="number">
+    <label>Start Time</label>
+    <input name="start" required type="time">
+    <label>End Time</label>
+    <input name="end" required type="time">
+    <button>Save</button>
+    {% if msg %}
+    <p class="{{ cls }}">{{ msg }}</p>
+    {% endif %}
+</form>
+<p style="text-align:center;"><a href="/logout">Logout</a></p>
 </body>
 </html>

@@ -6,11 +6,12 @@ import math, json, os
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 
-# ------------------- Load Driver JSON -------------------
+# ------------------- Load driver JSON -------------------
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
 
 # ------------------- Helper Functions -------------------
+
 def today_date():
     return datetime.now().date()
 
@@ -51,8 +52,7 @@ def get_remarks(start, end, entry_date):
         return ""
 
 def find_row_by_date(ws, target_date):
-    """Find the row for today's date, starting from row 8"""
-    for r in range(8, 100):
+    for r in range(9, 9+31):
         cell = ws.cell(row=r, column=2).value
         if isinstance(cell, datetime) and cell.date() == target_date:
             return r
@@ -68,18 +68,21 @@ def is_row_locked(ws, row):
     return ws.cell(row=row, column=3).value not in (None, "")
 
 # ------------------- Routes -------------------
+
 @app.route("/", methods=["GET", "POST"])
 def login():
     msg = ""
-    cls = "error"
     if request.method == "POST":
         code = request.form.get("code")
         for car, info in DRIVER_DATA.items():
             if info.get("code") == code:
                 session["car"] = car
                 return redirect("/entry")
+        if code == "admin123":  # admin password
+            session["admin"] = True
+            return redirect("/admin")
         msg = "Invalid code"
-    return render_template("login.html", msg=msg, cls=cls)
+    return render_template("login.html", msg=msg)
 
 @app.route("/entry", methods=["GET", "POST"])
 def entry():
@@ -89,7 +92,6 @@ def entry():
     info = DRIVER_DATA[car]
     msg = ""
     cls = "success"
-
     if request.method == "POST":
         try:
             opening = int(request.form["opening"])
@@ -102,7 +104,7 @@ def entry():
 
             row = find_row_by_date(ws, today_date())
             if not row:
-                msg = "Today's date row not found"
+                msg = "Date row not found"
                 cls = "error"
             elif is_row_locked(ws, row):
                 msg = "Entry already saved 🔒"
@@ -123,27 +125,28 @@ def entry():
 
     return render_template("entry.html", car=car, msg=msg, cls=cls)
 
-@app.route("/admin", methods=["GET"])
+@app.route("/admin")
 def admin():
-    """Simple admin page to download both files"""
-    # You can add authentication here if needed
+    if "admin" not in session:
+        return redirect("/")
     return render_template("admin.html")
 
-@app.route("/download/<file_id>")
-def download(file_id):
-    """Download the full Excel workbooks"""
-    if file_id == "file1":
-        path = "excel/S&T BT February bill 2026.xlsx"
-    elif file_id == "file2":
-        path = "excel/BT bill February 2026(common).xlsx"
-    else:
-        return "File not found", 404
+@app.route("/download/file1")
+def download_file1():
+    if "admin" not in session:
+        return redirect("/")
+    return send_file("excel/S&T BT February bill 2026.xlsx", as_attachment=True)
 
-    return send_file(path, as_attachment=True)
+@app.route("/download/file2")
+def download_file2():
+    if "admin" not in session:
+        return redirect("/")
+    return send_file("excel/BT bill February 2026(common).xlsx", as_attachment=True)
 
 @app.route("/logout")
 def logout():
     session.pop("car", None)
+    session.pop("admin", None)
     return redirect("/")
 
 # ------------------- Run -------------------
