@@ -21,7 +21,7 @@ input, label, button {
 }
 
 button {
-    background-color: #4CAF50;
+    background-color: #1a6de9;
     color: white;
     border: none;
     border-radius: 4px;
@@ -29,7 +29,7 @@ button {
 }
 
 button:hover {
-    background-color: #45a049;
+    background-color: #1a6de9;
 }
 
 p.error {
@@ -52,7 +52,7 @@ p.success {
     display: block;
     margin: 10px 0;
     padding: 10px;
-    background-color: #4CAF50;
+    background-color: #1a6de9;
     color: white;
     text-align: center;
     text-decoration: none;
@@ -60,5 +60,5 @@ p.success {
 }
 
 .btn:hover {
-    background-color: #45a049;
+    background-color: #1a6de9;
 }
