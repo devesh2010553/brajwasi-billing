@@ -3,8 +3,7 @@ from openpyxl import load_workbook
 from datetime import datetime, timedelta, time
 import math, json, os
 
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
@@ -13,18 +12,11 @@ app.secret_key = "supersecretkey"
 
 # --------- Google Drive Setup ---------
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
-TOKEN_FILE = 'token.json'
-CLIENT_SECRET = 'client_secret_926648187166-7k8rt2qmi5oguhk9reehgrqqlfdjfg0f.apps.googleusercontent.com.json'
 
 def authenticate_drive():
-    creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    if not creds or not creds.valid:
-        flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET, SCOPES)
-        creds = flow.run_local_server(port=0)
-        with open(TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
+    # Load service account JSON from environment variable
+    service_account_info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
+    creds = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
     service = build('drive', 'v3', credentials=creds)
     return service
 
