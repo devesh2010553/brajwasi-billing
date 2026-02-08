@@ -1,12 +1,12 @@
-from flask import Flask, request, render_template, session, redirect
-from openpyxl import load_workbook
+from flask import Flask, request, render_template, session, redirect, send_file
+from openpyxl import load_workbook, Workbook
 from datetime import datetime, timedelta, time
-import math, json
+import math, json, os
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 
-# Load driver JSON
+# Load driver JSON mapping
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
 
@@ -24,13 +24,9 @@ def hours_between(start, end):
     dt2 = datetime.combine(d, end)
     if dt2 < dt1:
         dt2 += timedelta(days=1)
-    return (dt2 - dt1).total_seconds() / 3600  # float hours
+    return (dt2 - dt1).total_seconds() / 3600  # hours as float
 
 def calculate_ot(start, end):
-    """
-    OT = hours beyond 12 hours
-    If extra > 0.5h (30 min), count as 1 hour
-    """
     hrs = hours_between(start, end)
     extra = hrs - 12
     if extra <= 0:
@@ -41,7 +37,6 @@ def calculate_ot(start, end):
         return 0
 
 def is_night(start, end):
-    """Night if start before 5AM or end after 10PM"""
     return start < time(5,0) or end >= time(22,0)
 
 def get_remarks(start, end, entry_date):
@@ -57,7 +52,8 @@ def get_remarks(start, end, entry_date):
         return ""
 
 def find_row_by_date(ws, target_date):
-    for r in range(9, 9+31):
+    # Look for existing date row from row 8 onwards
+    for r in range(8, ws.max_row + 1):
         cell = ws.cell(row=r, column=2).value
         if isinstance(cell, datetime) and cell.date() == target_date:
             return r
@@ -67,7 +63,8 @@ def find_row_by_date(ws, target_date):
                     return r
             except:
                 pass
-    return None
+    # If not found, append at the next empty row
+    return ws.max_row + 1
 
 def is_row_locked(ws, row):
     return ws.cell(row=row, column=3).value not in (None, "")
@@ -94,6 +91,7 @@ def entry():
     info = DRIVER_DATA[car]
     msg = ""
     cls = "success"
+
     if request.method == "POST":
         try:
             opening = int(request.form["opening"])
@@ -105,13 +103,11 @@ def entry():
             ws = wb[info["sheet"]]
 
             row = find_row_by_date(ws, today_date())
-            if not row:
-                msg = "Date row not found"
-                cls = "error"
-            elif is_row_locked(ws, row):
+            if is_row_locked(ws, row):
                 msg = "Entry already saved 🔒"
                 cls = "error"
             else:
+                ws.cell(row=row, column=2).value = today_date()  # Date
                 ws.cell(row=row, column=3).value = opening
                 ws.cell(row=row, column=4).value = closing
                 ws.cell(row=row, column=5).value = closing - opening
@@ -132,9 +128,32 @@ def logout():
     session.pop("car", None)
     return redirect("/")
 
+@app.route("/download_month")
+def download_month():
+    # Create new workbook for monthly report
+    month_wb = Workbook()
+    month_wb.remove(month_wb.active)  # remove default sheet
+
+    for car, info in DRIVER_DATA.items():
+        driver_wb = load_workbook(info["file"])
+        driver_ws = driver_wb[info["sheet"]]
+        month_ws = month_wb.create_sheet(title=car)
+
+        # Copy header row from row 8
+        for col in range(1, driver_ws.max_column + 1):
+            month_ws.cell(row=1, column=col).value = driver_ws.cell(row=8, column=col).value
+
+        # Copy all daily rows (row 9 onwards)
+        for r in range(9, driver_ws.max_row + 1):
+            for c in range(1, driver_ws.max_column + 1):
+                month_ws.cell(row=r-8, column=c).value = driver_ws.cell(row=r, column=c).value
+
+    filename = f"Monthly_Report_{today_date().strftime('%b_%Y')}.xlsx"
+    month_wb.save(filename)
+    return send_file(filename, as_attachment=True)
+
 # ------------------- Run -------------------
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
