@@ -1,17 +1,19 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Login</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driver Login</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<form method="post">
-    <h3>Login</h3>
-    <input type="text" name="code" placeholder="Enter your code" required>
-    <button>Login</button>
-    {% if msg %}
-    <p class="error">{{ msg }}</p>
-    {% endif %}
-</form>
+<div class="container">
+    <h2>Driver Login</h2>
+    <form method="post">
+        <input name="code" placeholder="Enter your code" required>
+        <button>Login</button>
+        {% if msg %}<p class="error">{{ msg }}</p>{% endif %}
+    </form>
+</div>
 </body>
 </html>

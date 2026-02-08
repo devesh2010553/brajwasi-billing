@@ -3,15 +3,46 @@ from openpyxl import load_workbook
 from datetime import datetime, timedelta, time
 import math, json, os
 
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 
-# ------------------- Load driver JSON -------------------
+# --------- Google Drive Setup ---------
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
+TOKEN_FILE = 'token.json'
+CLIENT_SECRET = 'client_secret_926648187166-7k8rt2qmi5oguhk9reehgrqqlfdjfg0f.apps.googleusercontent.com.json'
+
+def authenticate_drive():
+    creds = None
+    if os.path.exists(TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    if not creds or not creds.valid:
+        flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET, SCOPES)
+        creds = flow.run_local_server(port=0)
+        with open(TOKEN_FILE, 'w') as token:
+            token.write(creds.to_json())
+    service = build('drive', 'v3', credentials=creds)
+    return service
+
+def upload_file_to_drive(file_path, folder_id=None):
+    service = authenticate_drive()
+    file_name = os.path.basename(file_path)
+    file_metadata = {'name': file_name}
+    if folder_id:
+        file_metadata['parents'] = [folder_id]
+    media = MediaFileUpload(file_path, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    return file.get('id')
+
+# --------- Load driver data ---------
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
 
-# ------------------- Helper Functions -------------------
-
+# --------- Helper functions ---------
 def today_date():
     return datetime.now().date()
 
@@ -19,22 +50,18 @@ def parse_time(t):
     return datetime.strptime(t, "%H:%M").time()
 
 def hours_between(start, end):
-    d = today_date()
-    dt1 = datetime.combine(d, start)
-    dt2 = datetime.combine(d, end)
+    dt1 = datetime.combine(today_date(), start)
+    dt2 = datetime.combine(today_date(), end)
     if dt2 < dt1:
         dt2 += timedelta(days=1)
-    return (dt2 - dt1).total_seconds() / 3600  # float hours
+    return (dt2 - dt1).total_seconds() / 3600
 
 def calculate_ot(start, end):
     hrs = hours_between(start, end)
     extra = hrs - 12
-    if extra <= 0:
-        return 0
-    elif extra > 0.5:
-        return math.ceil(extra)
-    else:
-        return 0
+    if extra <= 0: return 0
+    elif extra > 0.5: return math.ceil(extra)
+    return 0
 
 def is_night(start, end):
     return start < time(5,0) or end >= time(22,0)
@@ -42,17 +69,13 @@ def is_night(start, end):
 def get_remarks(start, end, entry_date):
     night = is_night(start, end)
     sunday = entry_date.weekday() == 6
-    if night and sunday:
-        return "Night/Sunday"
-    elif night:
-        return "Night"
-    elif sunday:
-        return "Sunday"
-    else:
-        return ""
+    if night and sunday: return "Night/Sunday"
+    elif night: return "Night"
+    elif sunday: return "Sunday"
+    return ""
 
 def find_row_by_date(ws, target_date):
-    for r in range(9, 9+31):
+    for r in range(9, 40):
         cell = ws.cell(row=r, column=2).value
         if isinstance(cell, datetime) and cell.date() == target_date:
             return r
@@ -60,16 +83,14 @@ def find_row_by_date(ws, target_date):
             try:
                 if datetime.strptime(cell.strip(), "%d-%b-%y").date() == target_date:
                     return r
-            except:
-                pass
+            except: pass
     return None
 
 def is_row_locked(ws, row):
     return ws.cell(row=row, column=3).value not in (None, "")
 
-# ------------------- Routes -------------------
-
-@app.route("/", methods=["GET", "POST"])
+# --------- Routes ---------
+@app.route("/", methods=["GET","POST"])
 def login():
     msg = ""
     if request.method == "POST":
@@ -78,20 +99,17 @@ def login():
             if info.get("code") == code:
                 session["car"] = car
                 return redirect("/entry")
-        if code == "admin123":  # admin password
-            session["admin"] = True
-            return redirect("/admin")
         msg = "Invalid code"
     return render_template("login.html", msg=msg)
 
-@app.route("/entry", methods=["GET", "POST"])
+@app.route("/entry", methods=["GET","POST"])
 def entry():
-    if "car" not in session:
-        return redirect("/")
+    if "car" not in session: return redirect("/")
     car = session["car"]
     info = DRIVER_DATA[car]
     msg = ""
     cls = "success"
+
     if request.method == "POST":
         try:
             opening = int(request.form["opening"])
@@ -115,41 +133,40 @@ def entry():
                 ws.cell(row=row, column=5).value = closing - opening
                 ws.cell(row=row, column=6).value = start.strftime("%I:%M %p")
                 ws.cell(row=row, column=7).value = end.strftime("%I:%M %p")
-                ws.cell(row=row, column=8).value = calculate_ot(start, end)
-                ws.cell(row=row, column=9).value = get_remarks(start, end, today_date())
+                ws.cell(row=row, column=8).value = calculate_ot(start,end)
+                ws.cell(row=row, column=9).value = get_remarks(start,end,today_date())
+
+                # Save locally
                 wb.save(info["file"])
-                msg = "Saved successfully ✅"
+
+                # Upload to Google Drive
+                upload_file_to_drive(info["file"])
+
+                msg = "Saved & backed up to Drive ✅"
         except Exception as e:
             msg = f"Error: {e}"
             cls = "error"
-
     return render_template("entry.html", car=car, msg=msg, cls=cls)
 
 @app.route("/admin")
 def admin():
-    if "admin" not in session:
-        return redirect("/")
     return render_template("admin.html")
 
-@app.route("/download/file1")
-def download_file1():
-    if "admin" not in session:
-        return redirect("/")
-    return send_file("excel/S&T BT February bill 2026.xlsx", as_attachment=True)
-
-@app.route("/download/file2")
-def download_file2():
-    if "admin" not in session:
-        return redirect("/")
-    return send_file("excel/BT bill February 2026(common).xlsx", as_attachment=True)
+@app.route("/download/<file_id>")
+def download(file_id):
+    file_path = ""
+    if file_id == "file1":
+        file_path = "excel/S&T BT February bill 2026.xlsx"
+    elif file_id == "file2":
+        file_path = "excel/BT bill February 2026(common).xlsx"
+    return send_file(file_path, as_attachment=True)
 
 @app.route("/logout")
 def logout():
     session.pop("car", None)
-    session.pop("admin", None)
     return redirect("/")
 
-# ------------------- Run -------------------
+# --------- Run server ---------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT",5000))
     app.run(host="0.0.0.0", port=port, debug=True)
