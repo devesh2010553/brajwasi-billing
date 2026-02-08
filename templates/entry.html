@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Vehicle Entry</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="manifest" href="/static/manifest.json">
+</head>
+<body>
+<form method="post">
+    <h3>Daily Entry for {{ car }}</h3>
+
+    <input name="opening" placeholder="Opening KM" required type="number">
+    <input name="closing" placeholder="Closing KM" required type="number">
+
+    <label>Start Time</label>
+    <input name="start" required type="time">
+
+    <label>End Time</label>
+    <input name="end" required type="time">
+
+    <button>Save</button>
+
+    {% if msg %}
+    <p class="{{ cls }}">{{ msg }}</p>
+    {% endif %}
+</form>
+<p style="text-align:center;"><a href="/logout">Logout</a></p>
+</body>
+</html>

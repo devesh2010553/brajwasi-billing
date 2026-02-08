@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Page</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<h2>All Driver Entries</h2>
+{% for car, rows in entries.items() %}
+<h3>{{ car }}</h3>
+<table>
+    <tr>
+        <th>Date</th>
+        <th>Opening</th>
+        <th>Closing</th>
+        <th>KMs</th>
+        <th>Start</th>
+        <th>End</th>
+        <th>OT</th>
+        <th>Remarks</th>
+    </tr>
+    {% for row in rows %}
+    <tr>
+        {% for i, val in enumerate(row) %}
+        <td data-label="{{ ['Date','Opening','Closing','KMs','Start','End','OT','Remarks'][i] }}">{{ val }}</td>
+        {% endfor %}
+    </tr>
+    {% endfor %}
+</table>
+{% endfor %}
+</body>
+</html>

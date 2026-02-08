@@ -1,0 +1,27 @@
+{
+  "UP80ET4509": {
+    "file": "excel/S&T BT February bill 2026.xlsx",
+    "sheet": "UP80ET4509",
+    "code": "1234"
+  },
+  "UP80JT7912": {
+    "file": "excel/S&T BT February bill 2026.xlsx",
+    "sheet": "UP80JT7912",
+    "code": "5678"
+  },
+  "UP79AT9051": {
+    "file": "excel/S&T BT February bill 2026.xlsx",
+    "sheet": "UP79AT9051",
+    "code": "9012"
+  },
+  "UP80JT5884": {
+    "file": "excel/BT bill February 2026(common).xlsx",
+    "sheet": "UP80JT5884",
+    "code": "3456"
+  },
+  "UP80GT6593": {
+    "file": "excel/BT bill February 2026(common).xlsx",
+    "sheet": "UP80GT6593",
+    "code": "7890"
+  }
+}

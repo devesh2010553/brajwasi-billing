@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Driver Login</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="manifest" href="/static/manifest.json">
+</head>
+<body>
+<form method="post">
+    <h3>Driver Login</h3>
+    <input type="text" name="code" placeholder="Enter your code" required>
+    <button>Login</button>
+    {% if msg %}
+    <p class="error">{{ msg }}</p>
+    {% endif %}
+</form>
+<script>
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/static/service-worker.js');
+}
+</script>
+</body>
+</html>
