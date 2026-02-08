@@ -212,5 +212,6 @@ token.json
 # Python
 __pycache__/
 *.pyc
-# Google Service Account JSON
-brajwasibillingdrive-269fe390da47.json
+# Ignore credentials
+credentials.json
+token.pickle

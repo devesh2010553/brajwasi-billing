@@ -1,30 +1,37 @@
-from flask import Flask, request, render_template, session, redirect, send_file
-import io, os, json, math
+from flask import Flask, request, render_template, session, redirect
+import os, io, json, math
 from datetime import datetime, timedelta, time
-
-from google.oauth2 import service_account
+import pandas as pd
+from openpyxl import load_workbook
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
-import pandas as pd
-from openpyxl import load_workbook, Workbook
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+import pickle
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
-DRIVE_FOLDER_ID = "1PZXxUVvB7IOIEG3uVsjUOyEo1A1zPZoP"
 
 # Load driver mapping
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
 
-# Authenticate service account
+# -------------------- Google Drive OAuth --------------------
 def get_drive_service():
-    creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-    if not creds_json:
-        raise Exception("Service account JSON not found in env")
-    creds = service_account.Credentials.from_service_account_info(
-        json.loads(creds_json), scopes=SCOPES)
+    creds = None
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token_file:
+            creds = pickle.load(token_file)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.pickle', 'wb') as token_file:
+            pickle.dump(creds, token_file)
     return build('drive', 'v3', credentials=creds)
 
 # Download Google Sheet as Excel
@@ -42,23 +49,33 @@ def download_excel(file_id):
     fh.seek(0)
     return fh
 
-# Upload Excel to Google Drive
+# Upload/overwrite Excel to Drive
 def upload_excel(file_bytes, file_name, folder_id=None):
     service = get_drive_service()
+    # Save temporary file
     temp_path = f"/tmp/{file_name}"
     with open(temp_path, "wb") as f:
         f.write(file_bytes.getbuffer())
 
-    file_metadata = {'name': file_name}
+    metadata = {"name": file_name}
     if folder_id:
-        file_metadata['parents'] = [folder_id]
+        metadata["parents"] = [folder_id]
 
     media = MediaFileUpload(temp_path,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    uploaded = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-    return uploaded.get("id")
+                            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    
+    # Check if file exists with same name
+    results = service.files().list(q=f"name='{file_name}'", fields="files(id)").execute()
+    items = results.get("files", [])
+    if items:
+        file_id = items[0]["id"]
+        updated = service.files().update(fileId=file_id, media_body=media).execute()
+        return updated.get("id")
+    else:
+        uploaded = service.files().create(body=metadata, media_body=media, fields="id").execute()
+        return uploaded.get("id")
 
-# Helper functions for time & calculations
+# -------------------- Helper functions --------------------
 def today_date(): return datetime.now().date()
 def parse_time(t): return datetime.strptime(t, "%H:%M").time()
 def hours_between(start,end):
@@ -70,12 +87,12 @@ def hours_between(start,end):
 def calculate_ot(start,end):
     hrs = hours_between(start,end)
     extra = hrs-12
-    if extra <= 0: return 0
-    elif extra > 0.5: return math.ceil(extra)
+    if extra<=0: return 0
+    elif extra>0.5: return math.ceil(extra)
     return 0
 
 def is_night(start,end):
-    return start < time(5,0) or end >= time(22,0)
+    return start<time(5,0) or end>=time(22,0)
 
 def get_remarks(start,end,entry_date):
     night = is_night(start,end)
@@ -97,18 +114,17 @@ def find_row(ws, target):
             except: pass
     return None
 
-# ROUTES
-
+# -------------------- Flask Routes --------------------
 @app.route("/", methods=["GET","POST"])
 def login():
-    msg=""
+    msg = ""
     if request.method=="POST":
-        code=request.form.get("code")
-        for car,info in DRIVER_DATA.items():
-            if info.get("code")==code:
-                session["car"]=car
+        code = request.form.get("code")
+        for car, info in DRIVER_DATA.items():
+            if info.get("code") == code:
+                session["car"] = car
                 return redirect("/entry")
-        msg="Invalid code"
+        msg = "Invalid code"
     return render_template("login.html", msg=msg)
 
 @app.route("/entry", methods=["GET","POST"])
@@ -125,7 +141,7 @@ def entry():
             start=parse_time(request.form["start"])
             end=parse_time(request.form["end"])
 
-            # Download Excel from Drive
+            # Download Excel
             excel_stream = download_excel(info["file_id"])
             wb = load_workbook(filename=excel_stream)
             ws = wb[info["sheet"]]
@@ -145,42 +161,22 @@ def entry():
                     ws.cell(row=row,column=8).value = calculate_ot(start,end)
                     ws.cell(row=row,column=9).value = get_remarks(start,end,today_date())
 
+                    # Save to in-memory buffer
                     out = io.BytesIO()
                     wb.save(out); out.seek(0)
 
-                    upload_excel(out, os.path.basename(info["file"]+".xlsx"), folder_id=DRIVE_FOLDER_ID)
+                    # Upload updated file to Drive
+                    upload_excel(out, f"{os.path.basename(info['file_id'])}.xlsx")
+
                     msg="Saved & backed up to Drive"; cls="success"
         except Exception as e:
             msg=f"Error: {e}"; cls="error"
 
     return render_template("entry.html", car=car, msg=msg, cls=cls)
 
-@app.route("/admin", methods=["GET"])
-def admin_panel():
-    return render_template("admin.html")
-
-@app.route("/download/<file_key>", methods=["GET"])
-def download_file(file_key):
-    if file_key not in ["file1","file2"]: return "Invalid file", 404
-    file_info = {
-        "file1": "S&T BT February bill 2026.xlsx",
-        "file2": "BT bill February 2026(common).xlsx"
-    }
-    # Download file from Drive
-    file_name = file_info[file_key]
-    file_id = None
-    for drv in DRIVER_DATA.values():
-        if drv["file"].endswith(file_name):
-            file_id = drv.get("file_id")
-            break
-    if not file_id:
-        return "File not found", 404
-    stream = download_excel(file_id)
-    return send_file(stream, download_name=file_name, as_attachment=True)
-
 @app.route("/logout")
 def logout():
-    session.pop("car",None)
+    session.pop("car", None)
     return redirect("/")
 
 if __name__=="__main__":
