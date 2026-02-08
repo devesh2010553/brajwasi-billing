@@ -3,6 +3,7 @@ from openpyxl import load_workbook
 from datetime import datetime, timedelta, time
 import math, json, os
 
+# --------- Google Drive Setup ---------
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -10,13 +11,15 @@ from googleapiclient.http import MediaFileUpload
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 
-# --------- Google Drive Setup ---------
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 
 def authenticate_drive():
-    # Load service account JSON from environment variable
-    service_account_info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
-    creds = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+    # Read service account JSON from environment variable
+    creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if not creds_json:
+        raise Exception("Service account JSON not found in environment variable")
+    creds_dict = json.loads(creds_json)
+    creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     service = build('drive', 'v3', credentials=creds)
     return service
 
@@ -30,9 +33,11 @@ def upload_file_to_drive(file_path, folder_id=None):
     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     return file.get('id')
 
+
 # --------- Load driver data ---------
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
+
 
 # --------- Helper functions ---------
 def today_date():
@@ -80,6 +85,7 @@ def find_row_by_date(ws, target_date):
 
 def is_row_locked(ws, row):
     return ws.cell(row=row, column=3).value not in (None, "")
+
 
 # --------- Routes ---------
 @app.route("/", methods=["GET","POST"])
@@ -157,6 +163,7 @@ def download(file_id):
 def logout():
     session.pop("car", None)
     return redirect("/")
+
 
 # --------- Run server ---------
 if __name__ == "__main__":
