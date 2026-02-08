@@ -1,17 +1,16 @@
 from flask import Flask, request, render_template, session, redirect, send_file
-from openpyxl import load_workbook, Workbook
+from openpyxl import load_workbook
 from datetime import datetime, timedelta, time
 import math, json, os
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 
-# Load driver JSON mapping
+# ------------------- Load Driver JSON -------------------
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
 
 # ------------------- Helper Functions -------------------
-
 def today_date():
     return datetime.now().date()
 
@@ -24,7 +23,7 @@ def hours_between(start, end):
     dt2 = datetime.combine(d, end)
     if dt2 < dt1:
         dt2 += timedelta(days=1)
-    return (dt2 - dt1).total_seconds() / 3600  # hours as float
+    return (dt2 - dt1).total_seconds() / 3600  # float hours
 
 def calculate_ot(start, end):
     hrs = hours_between(start, end)
@@ -52,8 +51,8 @@ def get_remarks(start, end, entry_date):
         return ""
 
 def find_row_by_date(ws, target_date):
-    # Look for existing date row from row 8 onwards
-    for r in range(8, ws.max_row + 1):
+    """Find the row for today's date, starting from row 8"""
+    for r in range(8, 100):
         cell = ws.cell(row=r, column=2).value
         if isinstance(cell, datetime) and cell.date() == target_date:
             return r
@@ -63,17 +62,16 @@ def find_row_by_date(ws, target_date):
                     return r
             except:
                 pass
-    # If not found, append at the next empty row
-    return ws.max_row + 1
+    return None
 
 def is_row_locked(ws, row):
     return ws.cell(row=row, column=3).value not in (None, "")
 
 # ------------------- Routes -------------------
-
 @app.route("/", methods=["GET", "POST"])
 def login():
     msg = ""
+    cls = "error"
     if request.method == "POST":
         code = request.form.get("code")
         for car, info in DRIVER_DATA.items():
@@ -81,7 +79,7 @@ def login():
                 session["car"] = car
                 return redirect("/entry")
         msg = "Invalid code"
-    return render_template("login.html", msg=msg)
+    return render_template("login.html", msg=msg, cls=cls)
 
 @app.route("/entry", methods=["GET", "POST"])
 def entry():
@@ -103,11 +101,13 @@ def entry():
             ws = wb[info["sheet"]]
 
             row = find_row_by_date(ws, today_date())
-            if is_row_locked(ws, row):
+            if not row:
+                msg = "Today's date row not found"
+                cls = "error"
+            elif is_row_locked(ws, row):
                 msg = "Entry already saved 🔒"
                 cls = "error"
             else:
-                ws.cell(row=row, column=2).value = today_date()  # Date
                 ws.cell(row=row, column=3).value = opening
                 ws.cell(row=row, column=4).value = closing
                 ws.cell(row=row, column=5).value = closing - opening
@@ -123,37 +123,30 @@ def entry():
 
     return render_template("entry.html", car=car, msg=msg, cls=cls)
 
+@app.route("/admin", methods=["GET"])
+def admin():
+    """Simple admin page to download both files"""
+    # You can add authentication here if needed
+    return render_template("admin.html")
+
+@app.route("/download/<file_id>")
+def download(file_id):
+    """Download the full Excel workbooks"""
+    if file_id == "file1":
+        path = "excel/S&T BT February bill 2026.xlsx"
+    elif file_id == "file2":
+        path = "excel/BT bill February 2026(common).xlsx"
+    else:
+        return "File not found", 404
+
+    return send_file(path, as_attachment=True)
+
 @app.route("/logout")
 def logout():
     session.pop("car", None)
     return redirect("/")
 
-@app.route("/download_month")
-def download_month():
-    # Create new workbook for monthly report
-    month_wb = Workbook()
-    month_wb.remove(month_wb.active)  # remove default sheet
-
-    for car, info in DRIVER_DATA.items():
-        driver_wb = load_workbook(info["file"])
-        driver_ws = driver_wb[info["sheet"]]
-        month_ws = month_wb.create_sheet(title=car)
-
-        # Copy header row from row 8
-        for col in range(1, driver_ws.max_column + 1):
-            month_ws.cell(row=1, column=col).value = driver_ws.cell(row=8, column=col).value
-
-        # Copy all daily rows (row 9 onwards)
-        for r in range(9, driver_ws.max_row + 1):
-            for c in range(1, driver_ws.max_column + 1):
-                month_ws.cell(row=r-8, column=c).value = driver_ws.cell(row=r, column=c).value
-
-    filename = f"Monthly_Report_{today_date().strftime('%b_%Y')}.xlsx"
-    month_wb.save(filename)
-    return send_file(filename, as_attachment=True)
-
 # ------------------- Run -------------------
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)

@@ -1,32 +1,18 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Admin Page</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<h2>All Driver Entries</h2>
-{% for car, rows in entries.items() %}
-<h3>{{ car }}</h3>
-<table>
-    <tr>
-        <th>Date</th>
-        <th>Opening</th>
-        <th>Closing</th>
-        <th>KMs</th>
-        <th>Start</th>
-        <th>End</th>
-        <th>OT</th>
-        <th>Remarks</th>
-    </tr>
-    {% for row in rows %}
-    <tr>
-        {% for i, val in enumerate(row) %}
-        <td data-label="{{ ['Date','Opening','Closing','KMs','Start','End','OT','Remarks'][i] }}">{{ val }}</td>
-        {% endfor %}
-    </tr>
-    {% endfor %}
-</table>
-{% endfor %}
+<div class="container">
+    <h2>Admin Panel</h2>
+    <p>Download the monthly Excel files:</p>
+    <a href="/download/file1" class="btn">Download S&T BT February bill 2026.xlsx</a>
+    <a href="/download/file2" class="btn">Download BT bill February 2026(common).xlsx</a>
+    <p style="text-align:center;"><a href="/logout">Logout</a></p>
+</div>
 </body>
 </html>
