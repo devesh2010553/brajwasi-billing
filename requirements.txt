@@ -1,6 +1,6 @@
 Flask==2.3.3
 gunicorn==21.2.0
-
+python-dotenv
 google-api-python-client==2.89.0
 google-auth==2.23.0
 google-auth-httplib2==0.1.0
