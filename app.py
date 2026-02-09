@@ -1,23 +1,34 @@
-from flask import Flask, request, render_template, session, redirect, send_file
-import io, os, json, math
+import os, io, json, math
 from datetime import datetime, timedelta, time
+from flask import Flask, request, render_template, session, redirect, send_file
+
+from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 from openpyxl import load_workbook
 
+# --------------------------------------------------
+# ENV
+# --------------------------------------------------
+load_dotenv()
+
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "supersecretkey")
 
-SCOPES = ['https://www.googleapis.com/auth/drive']
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-# Load driver mapping
+# --------------------------------------------------
+# LOAD DRIVER DATA
+# --------------------------------------------------
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
 
-# ---------------- GOOGLE DRIVE AUTH ----------------
+# --------------------------------------------------
+# GOOGLE DRIVE SERVICE
+# --------------------------------------------------
 def get_drive_service():
-    creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
     if not creds_json:
         raise Exception("Service account JSON not found in env")
 
@@ -27,22 +38,30 @@ def get_drive_service():
     )
     return build("drive", "v3", credentials=creds)
 
-# ---------------- DOWNLOAD EXCEL ----------------
+# --------------------------------------------------
+# DOWNLOAD EXCEL (CORRECT FOR .xlsx)
+# --------------------------------------------------
 def download_excel(file_id):
     service = get_drive_service()
-    request = service.files().export_media(
+
+    request = service.files().get_media(
         fileId=file_id,
-        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        supportsAllDrives=True
     )
+
     fh = io.BytesIO()
     downloader = MediaIoBaseDownload(fh, request)
+
     done = False
     while not done:
         _, done = downloader.next_chunk()
+
     fh.seek(0)
     return fh
 
-# ---------------- UPDATE EXISTING EXCEL (FIX) ----------------
+# --------------------------------------------------
+# UPDATE EXISTING EXCEL (NO QUOTA ISSUE)
+# --------------------------------------------------
 def update_excel(file_bytes, file_id):
     service = get_drive_service()
 
@@ -62,7 +81,9 @@ def update_excel(file_bytes, file_id):
         supportsAllDrives=True
     ).execute()
 
-# ---------------- HELPERS ----------------
+# --------------------------------------------------
+# HELPERS
+# --------------------------------------------------
 def today_date():
     return datetime.now().date()
 
@@ -112,7 +133,9 @@ def find_row(ws, target_date):
                 pass
     return None
 
-# ---------------- ROUTES ----------------
+# --------------------------------------------------
+# ROUTES
+# --------------------------------------------------
 @app.route("/", methods=["GET", "POST"])
 def login():
     msg = ""
@@ -167,6 +190,7 @@ def entry():
                 out.seek(0)
 
                 update_excel(out, info["file_id"])
+
                 msg = "Saved successfully"
                 cls = "success"
 
@@ -175,28 +199,6 @@ def entry():
             cls = "error"
 
     return render_template("entry.html", car=car, msg=msg, cls=cls)
-
-@app.route("/download/<file_key>")
-def download_file(file_key):
-    file_map = {
-        "file1": "S&T BT February bill 2026.xlsx",
-        "file2": "BT bill February 2026(common).xlsx"
-    }
-
-    if file_key not in file_map:
-        return "Invalid file", 404
-
-    file_id = None
-    for drv in DRIVER_DATA.values():
-        if drv["file_id"]:
-            file_id = drv["file_id"]
-            break
-
-    if not file_id:
-        return "File not found", 404
-
-    stream = download_excel(file_id)
-    return send_file(stream, download_name=file_map[file_key], as_attachment=True)
 
 @app.route("/admin")
 def admin_panel():
@@ -207,5 +209,8 @@ def logout():
     session.pop("car", None)
     return redirect("/")
 
+# --------------------------------------------------
+# MAIN
+# --------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
