@@ -4,13 +4,14 @@ from datetime import datetime, timedelta, time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+import pandas as pd
 from openpyxl import load_workbook
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev_secret_key")
+app.secret_key = "supersecretkey"
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
-DRIVE_FOLDER_ID = "YOUR_DRIVE_FOLDER_ID"  # Replace with your Drive folder ID
+DRIVE_FOLDER_ID = "1PZXxUVvB7IOIEG3uVsjUOyEo1A1zPZoP"
 
 # Load driver mapping
 with open("driver.json") as f:
@@ -28,7 +29,10 @@ def get_drive_service():
 # Download Excel from Drive
 def download_excel(file_id):
     service = get_drive_service()
-    request = service.files().get_media(fileId=file_id)
+    request = service.files().export_media(
+        fileId=file_id,
+        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
     fh = io.BytesIO()
     downloader = MediaIoBaseDownload(fh, request)
     done = False
@@ -37,17 +41,19 @@ def download_excel(file_id):
     fh.seek(0)
     return fh
 
-# Upload Excel to Google Drive (update same file)
-def upload_excel(file_bytes, file_id):
+# Upload Excel to Google Drive
+def upload_excel(file_bytes, file_name, folder_id=None):
     service = get_drive_service()
-    temp_path = "/tmp/temp.xlsx"
+    temp_path = f"/tmp/{file_name}"
     with open(temp_path, "wb") as f:
         f.write(file_bytes.getbuffer())
-
+    file_metadata = {'name': file_name}
+    if folder_id:
+        file_metadata['parents'] = [folder_id]
     media = MediaFileUpload(temp_path,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        resumable=True)
-    service.files().update(fileId=file_id, media_body=media).execute()
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    uploaded = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+    return uploaded.get("id")
 
 # Helper functions
 def today_date(): return datetime.now().date()
@@ -116,7 +122,6 @@ def entry():
             start=parse_time(request.form["start"])
             end=parse_time(request.form["end"])
 
-            # Download Excel
             excel_stream = download_excel(info["file_id"])
             wb = load_workbook(filename=excel_stream)
             ws = wb[info["sheet"]]
@@ -138,8 +143,7 @@ def entry():
 
                     out = io.BytesIO()
                     wb.save(out); out.seek(0)
-
-                    upload_excel(out, info["file_id"])
+                    upload_excel(out, f"{car}.xlsx", folder_id=DRIVE_FOLDER_ID)
                     msg="Saved & backed up to Drive"; cls="success"
         except Exception as e:
             msg=f"Error: {e}"; cls="error"
