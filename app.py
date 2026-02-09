@@ -7,29 +7,27 @@ from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 import pandas as pd
 from openpyxl import load_workbook
 
-# --- FLASK APP SETUP ---
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")  # Use env var in production
+app.secret_key = "supersecretkey"
 
-# --- GOOGLE DRIVE CONFIG ---
 SCOPES = ['https://www.googleapis.com/auth/drive']
-DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")  # Environment variable
+DRIVE_FOLDER_ID = "1PZXxUVvB7IOIEG3uVsjUOyEo1A1zPZoP"
 
-# --- Load driver mapping ---
+# Load driver mapping
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
 
-# --- GOOGLE DRIVE AUTHENTICATION ---
+# Authenticate service account from environment variable
 def get_drive_service():
     creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if not creds_json:
-        raise Exception("Service account JSON not found in environment variables")
+        raise Exception("Service account JSON not found in env")
     creds = service_account.Credentials.from_service_account_info(
         json.loads(creds_json), scopes=SCOPES
     )
     return build('drive', 'v3', credentials=creds)
 
-# --- DOWNLOAD AND UPLOAD EXCEL FUNCTIONS ---
+# Download Google Sheet as Excel
 def download_excel(file_id):
     service = get_drive_service()
     request = service.files().export_media(
@@ -44,6 +42,7 @@ def download_excel(file_id):
     fh.seek(0)
     return fh
 
+# Upload Excel to Google Drive
 def upload_excel(file_bytes, file_name, folder_id=None):
     service = get_drive_service()
     temp_path = f"/tmp/{file_name}"
@@ -61,97 +60,93 @@ def upload_excel(file_bytes, file_name, folder_id=None):
     uploaded = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
     return uploaded.get("id")
 
-# --- HELPER FUNCTIONS ---
+# Helper functions for time & calculations
 def today_date(): return datetime.now().date()
 def parse_time(t): return datetime.strptime(t, "%H:%M").time()
-def hours_between(start, end):
+def hours_between(start,end):
     dt1 = datetime.combine(today_date(), start)
     dt2 = datetime.combine(today_date(), end)
     if dt2 < dt1: dt2 += timedelta(days=1)
-    return (dt2 - dt1).total_seconds() / 3600
-
-def calculate_ot(start, end):
-    hrs = hours_between(start, end)
-    extra = hrs - 12
+    return (dt2-dt1).total_seconds()/3600
+def calculate_ot(start,end):
+    hrs = hours_between(start,end)
+    extra = hrs-12
     if extra <= 0: return 0
     elif extra > 0.5: return math.ceil(extra)
     return 0
-
-def is_night(start, end):
-    return start < time(5, 0) or end >= time(22, 0)
-
-def get_remarks(start, end, entry_date):
-    night = is_night(start, end)
-    sunday = entry_date.weekday() == 6
+def is_night(start,end):
+    return start < time(5,0) or end >= time(22,0)
+def get_remarks(start,end,entry_date):
+    night = is_night(start,end)
+    sunday = entry_date.weekday()==6
     if night and sunday: return "Night/Sunday"
     if night: return "Night"
     if sunday: return "Sunday"
     return ""
-
 def find_row(ws, target):
-    for r in range(9, ws.max_row + 1):
-        cell = ws.cell(row=r, column=2).value
-        if isinstance(cell, datetime) and cell.date() == target:
+    for r in range(9, ws.max_row+1):
+        cell = ws.cell(row=r,column=2).value
+        if isinstance(cell, datetime) and cell.date()==target:
             return r
-        if isinstance(cell, str):
+        if isinstance(cell,str):
             try:
-                if datetime.strptime(cell.strip(), "%d-%b-%y").date() == target:
+                if datetime.strptime(cell.strip(),"%d-%b-%y").date()==target:
                     return r
             except: pass
     return None
 
-# --- ROUTES ---
-@app.route("/", methods=["GET", "POST"])
+# ROUTES
+@app.route("/", methods=["GET","POST"])
 def login():
-    msg = ""
-    if request.method == "POST":
-        code = request.form.get("code")
-        for car, info in DRIVER_DATA.items():
-            if info.get("code") == code:
-                session["car"] = car
+    msg=""
+    if request.method=="POST":
+        code=request.form.get("code")
+        for car,info in DRIVER_DATA.items():
+            if info.get("code")==code:
+                session["car"]=car
                 return redirect("/entry")
-        msg = "Invalid code"
+        msg="Invalid code"
     return render_template("login.html", msg=msg)
 
-@app.route("/entry", methods=["GET", "POST"])
+@app.route("/entry", methods=["GET","POST"])
 def entry():
     if "car" not in session: return redirect("/")
     car = session["car"]
     info = DRIVER_DATA[car]
-    msg = ""; cls = "success"
-    if request.method == "POST":
+    msg=""; cls="success"
+    if request.method=="POST":
         try:
-            opening = int(request.form["opening"])
-            closing = int(request.form["closing"])
-            start = parse_time(request.form["start"])
-            end = parse_time(request.form["end"])
+            opening=int(request.form["opening"])
+            closing=int(request.form["closing"])
+            start=parse_time(request.form["start"])
+            end=parse_time(request.form["end"])
 
-            # Download Excel
+            # Download Excel from Drive
             excel_stream = download_excel(info["file_id"])
             wb = load_workbook(filename=excel_stream)
             ws = wb[info["sheet"]]
 
             row = find_row(ws, today_date())
             if not row:
-                msg = "Date row not found"; cls = "error"
+                msg="Date row not found"; cls="error"
             else:
-                if ws.cell(row=row, column=3).value:
-                    msg = "Entry already exists"; cls = "error"
+                if ws.cell(row=row,column=3).value:
+                    msg="Entry already exists"; cls="error"
                 else:
-                    ws.cell(row=row, column=3).value = opening
-                    ws.cell(row=row, column=4).value = closing
-                    ws.cell(row=row, column=5).value = closing - opening
-                    ws.cell(row=row, column=6).value = start.strftime("%I:%M %p")
-                    ws.cell(row=row, column=7).value = end.strftime("%I:%M %p")
-                    ws.cell(row=row, column=8).value = calculate_ot(start, end)
-                    ws.cell(row=row, column=9).value = get_remarks(start, end, today_date())
+                    ws.cell(row=row,column=3).value = opening
+                    ws.cell(row=row,column=4).value = closing
+                    ws.cell(row=row,column=5).value = closing - opening
+                    ws.cell(row=row,column=6).value = start.strftime("%I:%M %p")
+                    ws.cell(row=row,column=7).value = end.strftime("%I:%M %p")
+                    ws.cell(row=row,column=8).value = calculate_ot(start,end)
+                    ws.cell(row=row,column=9).value = get_remarks(start,end,today_date())
 
                     out = io.BytesIO()
                     wb.save(out); out.seek(0)
-                    upload_excel(out, os.path.basename(info["file"] + ".xlsx"), folder_id=DRIVE_FOLDER_ID)
-                    msg = "Saved & backed up to Drive"; cls = "success"
+                    upload_excel(out, os.path.basename(info["file"]+".xlsx"), folder_id=DRIVE_FOLDER_ID)
+                    msg="Saved & backed up to Drive"; cls="success"
         except Exception as e:
-            msg = f"Error: {e}"; cls = "error"
+            msg=f"Error: {e}"; cls="error"
 
     return render_template("entry.html", car=car, msg=msg, cls=cls)
 
@@ -161,7 +156,7 @@ def admin_panel():
 
 @app.route("/download/<file_key>", methods=["GET"])
 def download_file(file_key):
-    if file_key not in ["file1", "file2"]: return "Invalid file", 404
+    if file_key not in ["file1","file2"]: return "Invalid file", 404
     file_info = {
         "file1": "S&T BT February bill 2026.xlsx",
         "file2": "BT bill February 2026(common).xlsx"
@@ -179,9 +174,8 @@ def download_file(file_key):
 
 @app.route("/logout")
 def logout():
-    session.pop("car", None)
+    session.pop("car",None)
     return redirect("/")
 
-# --- MAIN ---
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+if __name__=="__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)))
