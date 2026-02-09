@@ -1,18 +1,16 @@
 from flask import Flask, request, render_template, session, redirect, send_file
 import io, os, json, math
 from datetime import datetime, timedelta, time
-
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
-import pandas as pd
-from openpyxl import load_workbook, Workbook
+from openpyxl import load_workbook
 
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+app.secret_key = os.environ.get("SECRET_KEY", "dev_secret_key")
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
-DRIVE_FOLDER_ID = "1PZXxUVvB7IOIEG3uVsjUOyEo1A1zPZoP"
+DRIVE_FOLDER_ID = "YOUR_DRIVE_FOLDER_ID"  # Replace with your Drive folder ID
 
 # Load driver mapping
 with open("driver.json") as f:
@@ -27,13 +25,10 @@ def get_drive_service():
         json.loads(creds_json), scopes=SCOPES)
     return build('drive', 'v3', credentials=creds)
 
-# Download Google Sheet as Excel
+# Download Excel from Drive
 def download_excel(file_id):
     service = get_drive_service()
-    request = service.files().export_media(
-        fileId=file_id,
-        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    request = service.files().get_media(fileId=file_id)
     fh = io.BytesIO()
     downloader = MediaIoBaseDownload(fh, request)
     done = False
@@ -42,23 +37,19 @@ def download_excel(file_id):
     fh.seek(0)
     return fh
 
-# Upload Excel to Google Drive
-def upload_excel(file_bytes, file_name, folder_id=None):
+# Upload Excel to Google Drive (update same file)
+def upload_excel(file_bytes, file_id):
     service = get_drive_service()
-    temp_path = f"/tmp/{file_name}"
+    temp_path = "/tmp/temp.xlsx"
     with open(temp_path, "wb") as f:
         f.write(file_bytes.getbuffer())
 
-    file_metadata = {'name': file_name}
-    if folder_id:
-        file_metadata['parents'] = [folder_id]
-
     media = MediaFileUpload(temp_path,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    uploaded = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-    return uploaded.get("id")
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        resumable=True)
+    service.files().update(fileId=file_id, media_body=media).execute()
 
-# Helper functions for time & calculations
+# Helper functions
 def today_date(): return datetime.now().date()
 def parse_time(t): return datetime.strptime(t, "%H:%M").time()
 def hours_between(start,end):
@@ -125,7 +116,7 @@ def entry():
             start=parse_time(request.form["start"])
             end=parse_time(request.form["end"])
 
-            # Download Excel from Drive
+            # Download Excel
             excel_stream = download_excel(info["file_id"])
             wb = load_workbook(filename=excel_stream)
             ws = wb[info["sheet"]]
@@ -148,7 +139,7 @@ def entry():
                     out = io.BytesIO()
                     wb.save(out); out.seek(0)
 
-                    upload_excel(out, os.path.basename(info["file"]+".xlsx"), folder_id=DRIVE_FOLDER_ID)
+                    upload_excel(out, info["file_id"])
                     msg="Saved & backed up to Drive"; cls="success"
         except Exception as e:
             msg=f"Error: {e}"; cls="error"
@@ -158,25 +149,6 @@ def entry():
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     return render_template("admin.html")
-
-@app.route("/download/<file_key>", methods=["GET"])
-def download_file(file_key):
-    if file_key not in ["file1","file2"]: return "Invalid file", 404
-    file_info = {
-        "file1": "S&T BT February bill 2026.xlsx",
-        "file2": "BT bill February 2026(common).xlsx"
-    }
-    # Download file from Drive
-    file_name = file_info[file_key]
-    file_id = None
-    for drv in DRIVER_DATA.values():
-        if drv["file"].endswith(file_name):
-            file_id = drv.get("file_id")
-            break
-    if not file_id:
-        return "File not found", 404
-    stream = download_excel(file_id)
-    return send_file(stream, download_name=file_name, as_attachment=True)
 
 @app.route("/logout")
 def logout():
