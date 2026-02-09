@@ -212,6 +212,24 @@ token.json
 # Python
 __pycache__/
 *.pyc
-# Ignore credentials
-credentials.json
-token.pickle
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Excel local copies
+local_copy.xlsx
+
+# Google API credentials (keep secret)
+service-account.json

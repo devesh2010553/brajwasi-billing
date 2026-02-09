@@ -1,63 +1,20 @@
-from flask import Flask, request, render_template, session, redirect, send_file
-import io, os, json, math
+from flask import Flask, render_template, request, redirect, session
 from datetime import datetime, timedelta, time
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
-import pandas as pd
+import math, io, os
+import openpyxl
 from openpyxl import load_workbook
+import json
 
 app = Flask(__name__)
-# Use environment variable for secret key, fallback to a default for dev (change in production!)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "supersecretkey")
+app.secret_key = "supersecretkey"
 
-SCOPES = ['https://www.googleapis.com/auth/drive']
-DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "1PZXxUVvB7IOIEG3uVsjUOyEo1A1zPZoP")
-
-# Load driver mapping JSON file once on startup
+# Load driver data
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
 
-def get_drive_service():
-    creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-    if not creds_json:
-        raise Exception("Google service account JSON not found in environment variable GOOGLE_APPLICATION_CREDENTIALS_JSON")
-    creds = service_account.Credentials.from_service_account_info(
-        json.loads(creds_json), scopes=SCOPES
-    )
-    return build('drive', 'v3', credentials=creds)
+DRIVE_FOLDER_ID = "1PZXxUVvB7IOIEG3uVsjUOyEo1A1zPZoP"  # Google Drive folder if using API
 
-def download_excel(file_id):
-    service = get_drive_service()
-    request = service.files().export_media(
-        fileId=file_id,
-        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    fh.seek(0)
-    return fh
-
-def upload_excel(file_bytes, file_name, folder_id=None):
-    service = get_drive_service()
-    temp_path = f"/tmp/{file_name}"
-    with open(temp_path, "wb") as f:
-        f.write(file_bytes.getbuffer())
-
-    file_metadata = {'name': file_name}
-    if folder_id:
-        file_metadata['parents'] = [folder_id]
-
-    media = MediaFileUpload(
-        temp_path,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-    uploaded = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-    return uploaded.get("id")
-
+# Helper functions
 def today_date():
     return datetime.now().date()
 
@@ -95,7 +52,8 @@ def get_remarks(start, end, entry_date):
     return ""
 
 def find_row(ws, target):
-    for r in range(9, ws.max_row + 1):
+    """Find the row number for today's date. If column 2 is empty, just return the next empty row from 8."""
+    for r in range(8, ws.max_row + 1):
         cell = ws.cell(row=r, column=2).value
         if isinstance(cell, datetime) and cell.date() == target:
             return r
@@ -105,7 +63,11 @@ def find_row(ws, target):
                     return r
             except Exception:
                 pass
-    return None
+    # If no date in column 2, just return the first empty row starting from 8
+    for r in range(8, ws.max_row + 1):
+        if not ws.cell(row=r, column=3).value:
+            return r
+    return ws.max_row + 1  # append at the end if all filled
 
 # ROUTES
 @app.route("/", methods=["GET", "POST"])
@@ -128,6 +90,17 @@ def entry():
     info = DRIVER_DATA[car]
     msg = ""
     cls = "success"
+
+    # Load local Excel file (replace with Google Drive API if needed)
+    file_path = f"{info['sheet']}.xlsx"
+    if not os.path.exists(file_path):
+        msg = "Excel file not found locally."
+        cls = "error"
+        return render_template("entry.html", car=car, msg=msg, cls=cls)
+
+    wb = load_workbook(file_path)
+    ws = wb[info["sheet"]]
+
     if request.method == "POST":
         try:
             opening = int(request.form["opening"])
@@ -135,65 +108,33 @@ def entry():
             start = parse_time(request.form["start"])
             end = parse_time(request.form["end"])
 
-            excel_stream = download_excel(info["file_id"])
-            wb = load_workbook(filename=excel_stream)
-            ws = wb[info["sheet"]]
-
             row = find_row(ws, today_date())
-            if not row:
-                msg = "Date row not found"
+            if ws.cell(row=row, column=3).value:
+                msg = "Entry already exists for today."
                 cls = "error"
             else:
-                if ws.cell(row=row, column=3).value:
-                    msg = "Entry already exists"
-                    cls = "error"
-                else:
-                    ws.cell(row=row, column=3).value = opening
-                    ws.cell(row=row, column=4).value = closing
-                    ws.cell(row=row, column=5).value = closing - opening
-                    ws.cell(row=row, column=6).value = start.strftime("%I:%M %p")
-                    ws.cell(row=row, column=7).value = end.strftime("%I:%M %p")
-                    ws.cell(row=row, column=8).value = calculate_ot(start, end)
-                    ws.cell(row=row, column=9).value = get_remarks(start, end, today_date())
+                ws.cell(row=row, column=3).value = opening
+                ws.cell(row=row, column=4).value = closing
+                ws.cell(row=row, column=5).value = closing - opening
+                ws.cell(row=row, column=6).value = start.strftime("%I:%M %p")
+                ws.cell(row=row, column=7).value = end.strftime("%I:%M %p")
+                ws.cell(row=row, column=8).value = calculate_ot(start, end)
+                ws.cell(row=row, column=9).value = get_remarks(start, end, today_date())
 
-                    out = io.BytesIO()
-                    wb.save(out)
-                    out.seek(0)
-                    upload_excel(out, os.path.basename(info["file"] + ".xlsx"), folder_id=DRIVE_FOLDER_ID)
-                    msg = "Saved & backed up to Drive"
-                    cls = "success"
+                wb.save(file_path)
+                msg = "Saved successfully."
+                cls = "success"
+
         except Exception as e:
             msg = f"Error: {e}"
             cls = "error"
+
     return render_template("entry.html", car=car, msg=msg, cls=cls)
-
-@app.route("/admin", methods=["GET"])
-def admin_panel():
-    return render_template("admin.html")
-
-@app.route("/download/<file_key>", methods=["GET"])
-def download_file(file_key):
-    if file_key not in ["file1", "file2"]:
-        return "Invalid file", 404
-    file_info = {
-        "file1": "S&T BT February bill 2026.xlsx",
-        "file2": "BT bill February 2026(common).xlsx"
-    }
-    file_name = file_info[file_key]
-    file_id = None
-    for drv in DRIVER_DATA.values():
-        if drv["file"].endswith(file_name):
-            file_id = drv.get("file_id")
-            break
-    if not file_id:
-        return "File not found", 404
-    stream = download_excel(file_id)
-    return send_file(stream, download_name=file_name, as_attachment=True)
 
 @app.route("/logout")
 def logout():
-    session.pop("car", None)
+    session.clear()
     return redirect("/")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(debug=True)
