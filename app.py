@@ -97,7 +97,7 @@ def entry():
             ot = calculate_ot(start, end)
 
             # Example row (adjust if needed)
-            row = today.day + 8
+            row = today.day + 7
             rng = f"{info['sheet']}!C{row}:I{row}"
 
             values = [[
