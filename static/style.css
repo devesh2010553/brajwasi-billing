@@ -1,6 +1,6 @@
 body {
     font-family: Arial, sans-serif;
-    background: #f7f7f7;
+    background: #f4f4f4;
     margin: 0;
     padding: 0;
 }
@@ -8,46 +8,40 @@ body {
 .container {
     max-width: 400px;
     margin: 50px auto;
-    background: #fff;
     padding: 20px;
-    box-shadow: 0 0 10px #ccc;
+    background: #fff;
     border-radius: 8px;
+    box-shadow: 0 0 10px #aaa;
 }
 
-h3 {
+h2, h3 {
     text-align: center;
-    margin-bottom: 20px;
 }
 
-input, button, select {
+form input, form button, form label {
     width: 100%;
+    margin: 5px 0;
     padding: 10px;
-    margin: 6px 0;
     box-sizing: border-box;
 }
 
-button {
-    background: #007bff;
-    color: white;
+form button {
+    background: #0a74da;
+    color: #fff;
     border: none;
     cursor: pointer;
 }
 
-button:hover {
-    background: #0056b3;
+form button:hover {
+    background: #095bb5;
 }
 
-p.error {
+.error {
     color: red;
     text-align: center;
 }
 
-p.success {
+.success {
     color: green;
     text-align: center;
-}
-
-label {
-    display: block;
-    margin-top: 10px;
 }

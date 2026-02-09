@@ -1,20 +1,33 @@
-from flask import Flask, render_template, request, redirect, session
-from datetime import datetime, timedelta, time
-import math, io, os
-import openpyxl
-from openpyxl import load_workbook
+import os
+import io
+import math
 import json
+from datetime import datetime, timedelta, time
+from flask import Flask, render_template, request, redirect, session
+from openpyxl import load_workbook
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+from google.oauth2.service_account import Credentials
+
+# -------------------- CONFIG --------------------
+APP_SECRET = "your_secret_key_here"
+DRIVER_JSON = "driver.json"   # Your driver.json file
+SCOPES = ["https://www.googleapis.com/auth/drive"]
+SERVICE_ACCOUNT_FILE = "driver.json"  # Must be your Google service account JSON
+DRIVE_FOLDER_ID = "1PZXxUVvB7IOIEG3uVsjUOyEo1A1zPZoP"  # Folder with Excel files
 
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+app.secret_key = APP_SECRET
 
 # Load driver data
-with open("driver.json") as f:
+with open(DRIVER_JSON) as f:
     DRIVER_DATA = json.load(f)
 
-DRIVE_FOLDER_ID = "1PZXxUVvB7IOIEG3uVsjUOyEo1A1zPZoP"  # Google Drive folder if using API
+# Initialize Google Drive API
+creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+drive_service = build("drive", "v3", credentials=creds)
 
-# Helper functions
+# -------------------- HELPER FUNCTIONS --------------------
 def today_date():
     return datetime.now().date()
 
@@ -52,8 +65,7 @@ def get_remarks(start, end, entry_date):
     return ""
 
 def find_row(ws, target):
-    """Find the row number for today's date. If column 2 is empty, just return the next empty row from 8."""
-    for r in range(8, ws.max_row + 1):
+    for r in range(8, ws.max_row + 1):  # Start from row 8 (first data row)
         cell = ws.cell(row=r, column=2).value
         if isinstance(cell, datetime) and cell.date() == target:
             return r
@@ -63,13 +75,27 @@ def find_row(ws, target):
                     return r
             except Exception:
                 pass
-    # If no date in column 2, just return the first empty row starting from 8
-    for r in range(8, ws.max_row + 1):
-        if not ws.cell(row=r, column=3).value:
-            return r
-    return ws.max_row + 1  # append at the end if all filled
+    return None
 
-# ROUTES
+def download_excel(file_id):
+    request_drive = drive_service.files().get_media(fileId=file_id)
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request_drive)
+    done = False
+    while not done:
+        status, done = downloader.next_chunk()
+    fh.seek(0)
+    return fh
+
+def upload_excel(stream, name, folder_id):
+    file_metadata = {
+        "name": name,
+        "parents": [folder_id]
+    }
+    media = MediaIoBaseUpload(stream, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", resumable=True)
+    drive_service.files().create(body=file_metadata, media_body=media).execute()
+
+# -------------------- ROUTES --------------------
 @app.route("/", methods=["GET", "POST"])
 def login():
     msg = ""
@@ -91,16 +117,6 @@ def entry():
     msg = ""
     cls = "success"
 
-    # Load local Excel file (replace with Google Drive API if needed)
-    file_path = f"{info['sheet']}.xlsx"
-    if not os.path.exists(file_path):
-        msg = "Excel file not found locally."
-        cls = "error"
-        return render_template("entry.html", car=car, msg=msg, cls=cls)
-
-    wb = load_workbook(file_path)
-    ws = wb[info["sheet"]]
-
     if request.method == "POST":
         try:
             opening = int(request.form["opening"])
@@ -108,22 +124,38 @@ def entry():
             start = parse_time(request.form["start"])
             end = parse_time(request.form["end"])
 
+            # Download workbook from Drive
+            excel_stream = download_excel(info["file_id"])
+            wb = load_workbook(filename=excel_stream)
+            ws = wb[info["sheet"]]
+
+            # Find today's row
             row = find_row(ws, today_date())
-            if ws.cell(row=row, column=3).value:
-                msg = "Entry already exists for today."
+            if not row:
+                msg = "Date row not found in sheet"
                 cls = "error"
             else:
-                ws.cell(row=row, column=3).value = opening
-                ws.cell(row=row, column=4).value = closing
-                ws.cell(row=row, column=5).value = closing - opening
-                ws.cell(row=row, column=6).value = start.strftime("%I:%M %p")
-                ws.cell(row=row, column=7).value = end.strftime("%I:%M %p")
-                ws.cell(row=row, column=8).value = calculate_ot(start, end)
-                ws.cell(row=row, column=9).value = get_remarks(start, end, today_date())
+                if ws.cell(row=row, column=3).value:
+                    msg = "Entry already exists"
+                    cls = "error"
+                else:
+                    # Fill data
+                    ws.cell(row=row, column=3).value = opening
+                    ws.cell(row=row, column=4).value = closing
+                    ws.cell(row=row, column=5).value = closing - opening
+                    ws.cell(row=row, column=6).value = start.strftime("%I:%M %p")
+                    ws.cell(row=row, column=7).value = end.strftime("%I:%M %p")
+                    ws.cell(row=row, column=8).value = calculate_ot(start, end)
+                    ws.cell(row=row, column=9).value = get_remarks(start, end, today_date())
 
-                wb.save(file_path)
-                msg = "Saved successfully."
-                cls = "success"
+                    # Upload back to Drive
+                    out = io.BytesIO()
+                    wb.save(out)
+                    out.seek(0)
+                    upload_excel(out, f"{info['sheet']}.xlsx", folder_id=DRIVE_FOLDER_ID)
+
+                    msg = "Saved successfully & backed up to Drive"
+                    cls = "success"
 
         except Exception as e:
             msg = f"Error: {e}"
@@ -133,8 +165,9 @@ def entry():
 
 @app.route("/logout")
 def logout():
-    session.clear()
+    session.pop("car", None)
     return redirect("/")
 
+# -------------------- RUN --------------------
 if __name__ == "__main__":
     app.run(debug=True)

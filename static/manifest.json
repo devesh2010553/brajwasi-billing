@@ -1,11 +1,10 @@
 {
-  "name": "Driver Daily Entry",
-  "short_name": "DriverEntry",
+  "name": "Brajwasi Travels Daily Entry",
+  "short_name": "BrajwasiEntry",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#007bff",
-  "description": "Daily driver entry app",
+  "theme_color": "#0a74da",
   "icons": [
     {
       "src": "/static/icons/icon-192.png",
