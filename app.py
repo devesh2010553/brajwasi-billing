@@ -17,16 +17,17 @@ DRIVE_FOLDER_ID = "1PZXxUVvB7IOIEG3uVsjUOyEo1A1zPZoP"
 with open("driver.json") as f:
     DRIVER_DATA = json.load(f)
 
-# Authenticate service account
+# Authenticate service account from environment variable
 def get_drive_service():
     creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if not creds_json:
         raise Exception("Service account JSON not found in env")
     creds = service_account.Credentials.from_service_account_info(
-        json.loads(creds_json), scopes=SCOPES)
+        json.loads(creds_json), scopes=SCOPES
+    )
     return build('drive', 'v3', credentials=creds)
 
-# Download Excel from Drive
+# Download Google Sheet as Excel
 def download_excel(file_id):
     service = get_drive_service()
     request = service.files().export_media(
@@ -47,15 +48,19 @@ def upload_excel(file_bytes, file_name, folder_id=None):
     temp_path = f"/tmp/{file_name}"
     with open(temp_path, "wb") as f:
         f.write(file_bytes.getbuffer())
+
     file_metadata = {'name': file_name}
     if folder_id:
         file_metadata['parents'] = [folder_id]
-    media = MediaFileUpload(temp_path,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    media = MediaFileUpload(
+        temp_path,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
     uploaded = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
     return uploaded.get("id")
 
-# Helper functions
+# Helper functions for time & calculations
 def today_date(): return datetime.now().date()
 def parse_time(t): return datetime.strptime(t, "%H:%M").time()
 def hours_between(start,end):
@@ -63,17 +68,14 @@ def hours_between(start,end):
     dt2 = datetime.combine(today_date(), end)
     if dt2 < dt1: dt2 += timedelta(days=1)
     return (dt2-dt1).total_seconds()/3600
-
 def calculate_ot(start,end):
     hrs = hours_between(start,end)
     extra = hrs-12
     if extra <= 0: return 0
     elif extra > 0.5: return math.ceil(extra)
     return 0
-
 def is_night(start,end):
     return start < time(5,0) or end >= time(22,0)
-
 def get_remarks(start,end,entry_date):
     night = is_night(start,end)
     sunday = entry_date.weekday()==6
@@ -81,7 +83,6 @@ def get_remarks(start,end,entry_date):
     if night: return "Night"
     if sunday: return "Sunday"
     return ""
-
 def find_row(ws, target):
     for r in range(9, ws.max_row+1):
         cell = ws.cell(row=r,column=2).value
@@ -95,7 +96,6 @@ def find_row(ws, target):
     return None
 
 # ROUTES
-
 @app.route("/", methods=["GET","POST"])
 def login():
     msg=""
@@ -114,7 +114,6 @@ def entry():
     car = session["car"]
     info = DRIVER_DATA[car]
     msg=""; cls="success"
-
     if request.method=="POST":
         try:
             opening=int(request.form["opening"])
@@ -122,6 +121,7 @@ def entry():
             start=parse_time(request.form["start"])
             end=parse_time(request.form["end"])
 
+            # Download Excel from Drive
             excel_stream = download_excel(info["file_id"])
             wb = load_workbook(filename=excel_stream)
             ws = wb[info["sheet"]]
@@ -143,7 +143,7 @@ def entry():
 
                     out = io.BytesIO()
                     wb.save(out); out.seek(0)
-                    upload_excel(out, f"{car}.xlsx", folder_id=DRIVE_FOLDER_ID)
+                    upload_excel(out, os.path.basename(info["file"]+".xlsx"), folder_id=DRIVE_FOLDER_ID)
                     msg="Saved & backed up to Drive"; cls="success"
         except Exception as e:
             msg=f"Error: {e}"; cls="error"
@@ -153,6 +153,24 @@ def entry():
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     return render_template("admin.html")
+
+@app.route("/download/<file_key>", methods=["GET"])
+def download_file(file_key):
+    if file_key not in ["file1","file2"]: return "Invalid file", 404
+    file_info = {
+        "file1": "S&T BT February bill 2026.xlsx",
+        "file2": "BT bill February 2026(common).xlsx"
+    }
+    file_name = file_info[file_key]
+    file_id = None
+    for drv in DRIVER_DATA.values():
+        if drv["file"].endswith(file_name):
+            file_id = drv.get("file_id")
+            break
+    if not file_id:
+        return "File not found", 404
+    stream = download_excel(file_id)
+    return send_file(stream, download_name=file_name, as_attachment=True)
 
 @app.route("/logout")
 def logout():
