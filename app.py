@@ -1,51 +1,68 @@
-import io
-import os
-import math
+from flask import Flask, request, render_template, session, redirect, send_file
+import io, os, json, math
 from datetime import datetime, timedelta, time
-import json
-
-from flask import Flask, render_template, request, redirect, session
-from openpyxl import load_workbook
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-from google.oauth2.service_account import Credentials
+from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+from openpyxl import load_workbook
 
-# ----------------------------
-# GOOGLE SERVICE ACCOUNT SETUP
-# ----------------------------
-SERVICE_ACCOUNT_INFO = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-if not SERVICE_ACCOUNT_INFO:
-    raise Exception("Service account JSON not set in environment variable")
-
-SERVICE_ACCOUNT_DICT = json.loads(SERVICE_ACCOUNT_INFO)
-SCOPES = ["https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_DICT, scopes=SCOPES)
-
-# Google Drive service
-service = build('drive', 'v3', credentials=creds)
-
-# ----------------------------
-# FLASK APP SETUP
-# ----------------------------
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "supersecretkey")
+app.secret_key = "supersecretkey"
 
-# ----------------------------
-# DRIVER DATA
-# ----------------------------
-DRIVER_DATA = {
-    "UP80ET4509": {"file_id": "1qiwgJAwv6CRdPlrU8eHL5AEyO8keSzZD", "sheet": "UP80ET4509", "code": "1234"},
-    "UP80JT7912": {"file_id": "1qiwgJAwv6CRdPlrU8eHL5AEyO8keSzZD", "sheet": "UP80JT7912", "code": "5678"},
-    "UP79AT9051": {"file_id": "1qiwgJAwv6CRdPlrU8eHL5AEyO8keSzZD", "sheet": "UP79AT9051", "code": "9012"},
-    "UP80JT5884": {"file_id": "1Fu08Gou2DB4YmZi1Z4pXKON8GCVUlsdG", "sheet": "UP80JT5884", "code": "3456"},
-    "UP80GT6593": {"file_id": "1Fu08Gou2DB4YmZi1Z4pXKON8GCVUlsdG", "sheet": "UP80GT6593", "code": "7890"}
-}
+SCOPES = ['https://www.googleapis.com/auth/drive']
 
-DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID")  # Optional backup folder
+# Load driver mapping
+with open("driver.json") as f:
+    DRIVER_DATA = json.load(f)
 
-# ----------------------------
-# HELPER FUNCTIONS
-# ----------------------------
+# ---------------- GOOGLE DRIVE AUTH ----------------
+def get_drive_service():
+    creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if not creds_json:
+        raise Exception("Service account JSON not found in env")
+
+    creds = service_account.Credentials.from_service_account_info(
+        json.loads(creds_json),
+        scopes=SCOPES
+    )
+    return build("drive", "v3", credentials=creds)
+
+# ---------------- DOWNLOAD EXCEL ----------------
+def download_excel(file_id):
+    service = get_drive_service()
+    request = service.files().export_media(
+        fileId=file_id,
+        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    fh.seek(0)
+    return fh
+
+# ---------------- UPDATE EXISTING EXCEL (FIX) ----------------
+def update_excel(file_bytes, file_id):
+    service = get_drive_service()
+
+    temp_path = "/tmp/temp.xlsx"
+    with open(temp_path, "wb") as f:
+        f.write(file_bytes.getbuffer())
+
+    media = MediaFileUpload(
+        temp_path,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        resumable=True
+    )
+
+    service.files().update(
+        fileId=file_id,
+        media_body=media,
+        supportsAllDrives=True
+    ).execute()
+
+# ---------------- HELPERS ----------------
 def today_date():
     return datetime.now().date()
 
@@ -82,42 +99,20 @@ def get_remarks(start, end, entry_date):
         return "Sunday"
     return ""
 
-def find_row(ws, target):
+def find_row(ws, target_date):
     for r in range(9, ws.max_row + 1):
         cell = ws.cell(row=r, column=2).value
-        if isinstance(cell, datetime) and cell.date() == target:
+        if isinstance(cell, datetime) and cell.date() == target_date:
             return r
         if isinstance(cell, str):
             try:
-                if datetime.strptime(cell.strip(), "%d-%b-%y").date() == target:
+                if datetime.strptime(cell.strip(), "%d-%b-%y").date() == target_date:
                     return r
-            except Exception:
+            except:
                 pass
     return None
 
-# ----------------------------
-# GOOGLE DRIVE FUNCTIONS
-# ----------------------------
-def download_excel(file_id):
-    request = service.files().get_media(fileId=file_id)
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while not done:
-        status, done = downloader.next_chunk()
-    fh.seek(0)
-    return fh
-
-def upload_excel(file_obj, name, folder_id=None):
-    file_metadata = {"name": name}
-    if folder_id:
-        file_metadata["parents"] = [folder_id]
-    media = MediaIoBaseUpload(file_obj, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-
-# ----------------------------
-# FLASK ROUTES
-# ----------------------------
+# ---------------- ROUTES ----------------
 @app.route("/", methods=["GET", "POST"])
 def login():
     msg = ""
@@ -134,10 +129,12 @@ def login():
 def entry():
     if "car" not in session:
         return redirect("/")
+
     car = session["car"]
     info = DRIVER_DATA[car]
     msg = ""
     cls = "success"
+
     if request.method == "POST":
         try:
             opening = int(request.form["opening"])
@@ -153,32 +150,62 @@ def entry():
             if not row:
                 msg = "Date row not found"
                 cls = "error"
+            elif ws.cell(row=row, column=3).value:
+                msg = "Entry already exists"
+                cls = "error"
             else:
-                if ws.cell(row=row, column=3).value:
-                    msg = "Entry already exists"
-                    cls = "error"
-                else:
-                    ws.cell(row=row, column=3).value = opening
-                    ws.cell(row=row, column=4).value = closing
-                    ws.cell(row=row, column=5).value = closing - opening
-                    ws.cell(row=row, column=6).value = start.strftime("%I:%M %p")
-                    ws.cell(row=row, column=7).value = end.strftime("%I:%M %p")
-                    ws.cell(row=row, column=8).value = calculate_ot(start, end)
-                    ws.cell(row=row, column=9).value = get_remarks(start, end, today_date())
+                ws.cell(row=row, column=3).value = opening
+                ws.cell(row=row, column=4).value = closing
+                ws.cell(row=row, column=5).value = closing - opening
+                ws.cell(row=row, column=6).value = start.strftime("%I:%M %p")
+                ws.cell(row=row, column=7).value = end.strftime("%I:%M %p")
+                ws.cell(row=row, column=8).value = calculate_ot(start, end)
+                ws.cell(row=row, column=9).value = get_remarks(start, end, today_date())
 
-                    out = io.BytesIO()
-                    wb.save(out)
-                    out.seek(0)
-                    upload_excel(out, os.path.basename(info["sheet"] + ".xlsx"), folder_id=DRIVE_FOLDER_ID)
-                    msg = "Saved & backed up to Drive"
-                    cls = "success"
+                out = io.BytesIO()
+                wb.save(out)
+                out.seek(0)
+
+                update_excel(out, info["file_id"])
+                msg = "Saved successfully"
+                cls = "success"
+
         except Exception as e:
             msg = f"Error: {e}"
             cls = "error"
+
     return render_template("entry.html", car=car, msg=msg, cls=cls)
 
-# ----------------------------
-# RUN
-# ----------------------------
+@app.route("/download/<file_key>")
+def download_file(file_key):
+    file_map = {
+        "file1": "S&T BT February bill 2026.xlsx",
+        "file2": "BT bill February 2026(common).xlsx"
+    }
+
+    if file_key not in file_map:
+        return "Invalid file", 404
+
+    file_id = None
+    for drv in DRIVER_DATA.values():
+        if drv["file_id"]:
+            file_id = drv["file_id"]
+            break
+
+    if not file_id:
+        return "File not found", 404
+
+    stream = download_excel(file_id)
+    return send_file(stream, download_name=file_map[file_key], as_attachment=True)
+
+@app.route("/admin")
+def admin_panel():
+    return render_template("admin.html")
+
+@app.route("/logout")
+def logout():
+    session.pop("car", None)
+    return redirect("/")
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
