@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, session
+from flask import Flask, render_template, request, redirect, session, send_from_directory
 import json, os, math
 from datetime import datetime, timedelta, time
 from google.oauth2 import service_account
@@ -62,6 +62,15 @@ def get_remarks(start, end, date):
         return "Sunday"
     return ""
 
+# ---------- PWA Routes ----------
+@app.route('/manifest.json')
+def manifest():
+    return send_from_directory(os.getcwd(), 'manifest.json')
+
+@app.route('/service-worker.js')
+def sw():
+    return send_from_directory(os.getcwd(), 'service-worker.js')
+
 # ---------- Routes ----------
 @app.route("/", methods=["GET", "POST"])
 def login():
@@ -96,7 +105,6 @@ def entry():
             remarks = get_remarks(start, end, today)
             ot = calculate_ot(start, end)
 
-            # Example row (adjust if needed)
             row = today.day + 7
             rng = f"{info['sheet']}!C{row}:I{row}"
 
