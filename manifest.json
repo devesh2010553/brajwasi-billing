@@ -1,10 +1,11 @@
 {
   "name": "Brajwasi Travels Daily Entry",
-  "short_name": "BrajwasiEntry",
+  "short_name": "Brajwasi",
   "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#ffffff",
   "theme_color": "#0a74da",
   "description": "Daily Entry App for Brajwasi Travels",
@@ -12,12 +13,14 @@
     {
       "src": "/static/icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "/static/icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
