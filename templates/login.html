@@ -4,8 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Driver Login</title>
+
 <link rel="stylesheet" href="/static/style.css">
+
+<!-- PWA SETTINGS -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0a74da">
+<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 </head>
+
 <body>
 <div class="container">
 <h2>Driver Login</h2>
@@ -15,5 +22,15 @@
     {% if msg %}<p class="error">{{ msg }}</p>{% endif %}
 </form>
 </div>
+
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js')
+    .then(function() {
+      console.log("Service Worker Registered");
+    });
+}
+</script>
+
 </body>
 </html>

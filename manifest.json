@@ -1,10 +1,13 @@
 {
   "name": "Brajwasi Travels Daily Entry",
   "short_name": "BrajwasiEntry",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#0a74da",
+  "description": "Daily Entry App for Brajwasi Travels",
   "icons": [
     {
       "src": "/static/icons/icon-192.png",
