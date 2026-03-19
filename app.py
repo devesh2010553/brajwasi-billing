@@ -116,11 +116,13 @@ def entry():
             start = parse_time(request.form["start"])
             end = parse_time(request.form["end"])
 
-            today = today_date()
-            remarks = get_remarks(start, end, today)
+            entry_date_str = request.form.get("entry_date", "")
+            entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date() if entry_date_str else today_date()
+
+            remarks = get_remarks(start, end, entry_date)
             ot = calculate_ot(start, end)
 
-            row = today.day + 7
+            row = entry_date.day + 7
             rng = f"{info['sheet']}!C{row}:I{row}"
 
             values = [[
@@ -146,7 +148,7 @@ def entry():
             msg = str(e)
             cls = "error"
 
-    return render_template("entry.html", car=car, msg=msg, cls=cls)
+    return render_template("entry.html", car=car, msg=msg, cls=cls, today=today_date().isoformat())
 
 @app.route("/check-entry", methods=["POST"])
 def check_entry():
