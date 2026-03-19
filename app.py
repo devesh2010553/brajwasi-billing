@@ -48,22 +48,25 @@ def calculate_ot(start, end):
     if extra <= 0:
         return 0
     if extra > 0.5:
-        return math.ceil(extra)
+        return 1
     return 0
 
-def is_night(start, end):
-    return start < time(5, 0) or end >= time(22, 0)
-
 def get_remarks(start, end, date):
-    night = is_night(start, end)
+    night_start = start < time(5, 0)       # started before 5 AM
+    night_end = end >= time(22, 0)          # closed at or after 10 PM
     sunday = date.weekday() == 6
-    if night and sunday:
-        return "Night/Sunday"
-    if night:
-        return "Night"
+
+    parts = []
+
+    if night_start and night_end:
+        parts.append("Night Night")
+    elif night_start or night_end:
+        parts.append("Night")
+
     if sunday:
-        return "Sunday"
-    return ""
+        parts.append("Sunday")
+
+    return "/".join(parts)
 
 # ---------- PWA Routes ----------
 @app.route('/manifest.json')
