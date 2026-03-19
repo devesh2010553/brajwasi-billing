@@ -17,6 +17,8 @@
 <div class="container">
 <h3>Daily Entry for {{ car }}</h3>
 <form method="post">
+    <label>Date</label>
+    <input name="entry_date" type="date" value="{{ today }}" required>
     <input name="opening" placeholder="Opening KM" type="number" required>
     <input name="closing" placeholder="Closing KM" type="number" required>
     <label>Start Time</label>
