@@ -116,13 +116,11 @@ def entry():
             start = parse_time(request.form["start"])
             end = parse_time(request.form["end"])
 
-            entry_date_str = request.form.get("entry_date", "")
-            entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date() if entry_date_str else today_date()
-
-            remarks = get_remarks(start, end, entry_date)
+            today = today_date()
+            remarks = get_remarks(start, end, today)
             ot = calculate_ot(start, end)
 
-            row = entry_date.day + 7
+            row = today.day + 7
             rng = f"{info['sheet']}!C{row}:I{row}"
 
             values = [[
@@ -148,7 +146,32 @@ def entry():
             msg = str(e)
             cls = "error"
 
-    return render_template("entry.html", car=car, msg=msg, cls=cls, today=today_date().isoformat())
+    return render_template("entry.html", car=car, msg=msg, cls=cls)
+
+@app.route("/check-entry", methods=["POST"])
+def check_entry():
+    if "car" not in session:
+        return {"filled": False}
+
+    car = session["car"]
+    info = DRIVERS[car]
+
+    try:
+        entry_date_str = request.json.get("entry_date", "")
+        entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
+        row = entry_date.day + 7
+        rng = f"{info['sheet']}!C{row}"
+
+        result = sheets.spreadsheets().values().get(
+            spreadsheetId=info["file_id"],
+            range=rng
+        ).execute()
+
+        values = result.get("values", [])
+        filled = bool(values and values[0] and str(values[0][0]).strip() != "")
+        return {"filled": filled}
+    except Exception as e:
+        return {"filled": False, "error": str(e)}
 
 @app.route("/logout")
 def logout():
