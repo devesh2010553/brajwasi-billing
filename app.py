@@ -45,9 +45,16 @@ def hours_between(start, end):
 def calculate_ot(start, end):
     hrs = hours_between(start, end)
     extra = hrs - 12
-    if extra <= 0.5:       # 0 or less than half hour extra → no OT
+    if extra <= 0:
         return 0
-    return math.ceil(extra)  # more than 0.5h → round up to nearest full hour
+    full_hours = int(extra)          # whole hours of extra time
+    fraction = extra - full_hours    # remaining minutes as fraction of hour
+    if fraction > 0.5:
+        return full_hours + 1        # e.g. 1h 35min → 2
+    elif full_hours == 0:
+        return 0                     # e.g. 0h 25min → 0 (under half hour)
+    else:
+        return full_hours            # e.g. 1h 25min → 1
 
 def get_remarks(start, end, date):
     night_start = start < time(5, 0)       # started before 5 AM
@@ -175,6 +182,36 @@ def check_entry():
         return {"filled": filled}
     except Exception as e:
         return {"filled": False, "error": str(e)}
+
+@app.route("/get-last-closing", methods=["POST"])
+def get_last_closing():
+    if "car" not in session:
+        return {"closing": None}
+
+    car = session["car"]
+    info = DRIVERS[car]
+
+    try:
+        entry_date_str = request.json.get("entry_date", "")
+        entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
+
+        # Go back day by day (up to 7 days) to find last filled closing KM
+        for i in range(1, 8):
+            prev_date = entry_date - timedelta(days=i)
+            prev_row = prev_date.day + 7
+            # Column D is closing KM (C=opening, D=closing)
+            rng = f"{info['sheet']}!D{prev_row}"
+            result = sheets.spreadsheets().values().get(
+                spreadsheetId=info["file_id"],
+                range=rng
+            ).execute()
+            values = result.get("values", [])
+            if values and values[0] and str(values[0][0]).strip() != "":
+                return {"closing": values[0][0]}
+
+        return {"closing": None}
+    except Exception as e:
+        return {"closing": None, "error": str(e)}
 
 @app.route("/logout")
 def logout():

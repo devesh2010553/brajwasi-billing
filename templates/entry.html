@@ -19,7 +19,7 @@
 <form id="entryForm" method="post">
     <label>Date</label>
     <input id="entry_date" name="entry_date" type="date" value="{{ today }}" required>
-    <input name="opening" placeholder="Opening KM" type="number" required>
+    <input id="opening" name="opening" placeholder="Opening KM" type="number" required>
     <input name="closing" placeholder="Closing KM" type="number" required>
     <label>Start Time</label>
     <input name="start" type="time" required>
@@ -113,7 +113,46 @@ window.addEventListener('appinstalled', () => {
 
 const form = document.getElementById('entryForm');
 const modal = document.getElementById('confirmModal');
+const dateInput = document.getElementById('entry_date');
+const openingInput = document.getElementById('opening');
 let confirmed = false;
+
+// Fetch last closing KM for selected date and pre-fill opening
+async function fetchLastClosing(dateVal) {
+    if (!dateVal) return;
+    try {
+        const res = await fetch('/get-last-closing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entry_date: dateVal })
+        });
+        const data = await res.json();
+        if (data.closing !== null && data.closing !== undefined) {
+            // Only pre-fill if driver hasn't manually typed anything
+            if (!openingInput.dataset.manuallyEdited) {
+                openingInput.value = data.closing;
+                openingInput.placeholder = `Opening KM (last closing: ${data.closing})`;
+            }
+        }
+    } catch(err) {
+        // silently ignore — driver fills manually
+    }
+}
+
+// Mark as manually edited if driver types in the field
+openingInput.addEventListener('input', () => {
+    openingInput.dataset.manuallyEdited = 'true';
+});
+
+// Re-fetch when date changes (and clear manual edit flag)
+dateInput.addEventListener('change', () => {
+    delete openingInput.dataset.manuallyEdited;
+    openingInput.value = '';
+    fetchLastClosing(dateInput.value);
+});
+
+// Auto-fill on page load
+fetchLastClosing(dateInput.value);
 
 form.addEventListener('submit', async function(e) {
     if (confirmed) return;
