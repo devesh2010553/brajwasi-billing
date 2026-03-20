@@ -45,11 +45,9 @@ def hours_between(start, end):
 def calculate_ot(start, end):
     hrs = hours_between(start, end)
     extra = hrs - 12
-    if extra <= 0:
+    if extra <= 0.5:       # 0 or less than half hour extra → no OT
         return 0
-    if extra > 0.5:
-        return 1
-    return 0
+    return math.ceil(extra)  # more than 0.5h → round up to nearest full hour
 
 def get_remarks(start, end, date):
     night_start = start < time(5, 0)       # started before 5 AM
@@ -59,7 +57,7 @@ def get_remarks(start, end, date):
     parts = []
 
     if night_start and night_end:
-        parts.append("Night Night")
+        parts.append("Night/Night")
     elif night_start or night_end:
         parts.append("Night")
 
