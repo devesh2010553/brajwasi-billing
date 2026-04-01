@@ -1,11 +1,12 @@
 from flask import Flask, render_template, request, redirect, session, send_from_directory
-import json, os, math
+import json, os, math, calendar
 from datetime import datetime, timedelta, time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
+ADMIN_CODE = os.getenv("ADMIN_CODE", "admin1234")   # set ADMIN_CODE env var to change
 
 # ---------- SESSION LIFETIME (10 YEARS) ----------
 app.permanent_session_lifetime = timedelta(days=3650)
@@ -22,11 +23,13 @@ if not sa_json:
 creds = service_account.Credentials.from_service_account_info(
     json.loads(sa_json),
     scopes=[
-        "https://www.googleapis.com/auth/spreadsheets"
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
     ]
 )
 
 sheets = build("sheets", "v4", credentials=creds)
+drive  = build("drive",  "v3", credentials=creds)
 
 # ---------- Helpers ----------
 def today_date():
@@ -64,7 +67,7 @@ def get_remarks(start, end, date):
     parts = []
 
     if night_start and night_end:
-        parts.append("Night/Night")
+        parts.append("Night Night")
     elif night_start or night_end:
         parts.append("Night")
 
@@ -212,6 +215,117 @@ def get_last_closing():
         return {"closing": None}
     except Exception as e:
         return {"closing": None, "error": str(e)}
+
+def ordinal_suffix(n):
+    if 11 <= n <= 13:
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+
+def copy_and_prepare_sheet(old_file_id, month, year, driver_info):
+    """
+    1. Copy the existing Google Sheet file to a new file for the new month.
+    2. Update title row, dates, serial numbers in the new file.
+    3. Clear all data entry columns (C:I) so it's blank for new month.
+    4. Return new file_id.
+    """
+    days_in_month = calendar.monthrange(year, month)[1]
+    month_name    = datetime(year, month, 1).strftime("%B")
+    first_ord     = f"1{ordinal_suffix(1)}"
+    last_ord      = f"{days_in_month}{ordinal_suffix(days_in_month)}"
+    title_text    = (f" Vehicle Bill for the period from "
+                     f"{first_ord} {month_name} {year} "
+                     f"to {last_ord} {month_name} {year}")
+    new_name      = f"Brajwasi_{driver_info['sheet']}_{month_name}_{year}"
+
+    # --- Step 1: Copy file via Drive API ---
+    copied = drive.files().copy(
+        fileId=old_file_id,
+        body={"name": new_name}
+    ).execute()
+    new_file_id = copied["id"]
+
+    # --- Step 2: Update title row A3 ---
+    sheet = driver_info["sheet"]
+    sheets.spreadsheets().values().update(
+        spreadsheetId=new_file_id,
+        range=f"{sheet}!A3",
+        valueInputOption="USER_ENTERED",
+        body={"values": [[title_text]]}
+    ).execute()
+
+    # --- Step 3: Write serial numbers + dates (col A & B, rows 8 onward) ---
+    date_values = [
+        [day, datetime(year, month, day).strftime("%d-%b-%y")]
+        for day in range(1, days_in_month + 1)
+    ]
+    sheets.spreadsheets().values().update(
+        spreadsheetId=new_file_id,
+        range=f"{sheet}!A8:B{7 + days_in_month}",
+        valueInputOption="USER_ENTERED",
+        body={"values": date_values}
+    ).execute()
+
+    # --- Step 4: Clear leftover date rows if new month is shorter ---
+    if days_in_month < 31:
+        sheets.spreadsheets().values().clear(
+            spreadsheetId=new_file_id,
+            range=f"{sheet}!A{8 + days_in_month}:I{7 + 31}"
+        ).execute()
+
+    # --- Step 5: Clear all data columns C:I for new month (blank slate) ---
+    sheets.spreadsheets().values().clear(
+        spreadsheetId=new_file_id,
+        range=f"{sheet}!C8:I{7 + days_in_month}"
+    ).execute()
+
+    return new_file_id
+
+@app.route("/admin", methods=["GET", "POST"])
+def admin():
+    msg = ""
+    cls = "error"
+    if request.method == "POST":
+        code = request.form.get("code", "")
+        if code != ADMIN_CODE:
+            msg = "Invalid admin code"
+        else:
+            try:
+                month      = int(request.form["month"])
+                year       = int(request.form["year"])
+                month_name = datetime(year, month, 1).strftime("%B")
+
+                # Reload drivers fresh from disk each time
+                with open("driver.json", "r") as f:
+                    drivers = json.load(f)
+
+                new_file_ids = {}
+                for car, info in drivers.items():
+                    new_id = copy_and_prepare_sheet(info["file_id"], month, year, info)
+                    new_file_ids[car] = new_id
+
+                # Update driver.json with new file_ids
+                for car in drivers:
+                    drivers[car]["file_id"] = new_file_ids[car]
+
+                with open("driver.json", "w") as f:
+                    json.dump(drivers, f, indent=2)
+
+                # Reload in-memory DRIVERS
+                global DRIVERS
+                DRIVERS = drivers
+
+                days_in_month = calendar.monthrange(year, month)[1]
+                msg = (f"✅ New sheets created for {month_name} {year} "
+                       f"({days_in_month} days). "
+                       f"Old sheets are saved safely in Google Drive.")
+                cls = "success"
+
+            except Exception as e:
+                msg = f"Error: {e}"
+
+    now = datetime.now()
+    return render_template("admin.html", msg=msg, cls=cls,
+                           cur_month=now.month, cur_year=now.year)
 
 @app.route("/logout")
 def logout():
