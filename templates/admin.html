@@ -8,11 +8,10 @@
 </head>
 <body>
 <div class="container">
-  <h2>🗓️ New Month Setup</h2>
+  <h2>🗓️ Month Reset</h2>
   <p style="font-size:0.88rem; color:#555; text-align:center; margin-top:-8px;">
-    Creates a <strong>new sheet</strong> for the selected month.<br>
-    Old sheet &amp; all its data stays safely in Google Drive.<br>
-    <span style="font-size:0.83rem;">नए महीने की नई शीट बनेगी — पुरानी शीट सुरक्षित रहेगी।</span>
+    Updates all sheets: title, dates &amp; clears old entries<br>
+    <span style="font-size:0.83rem;">सभी शीट के dates, title और पुरानी entries अपडेट होंगी</span>
   </p>
 
   <form method="post" id="adminForm">
@@ -20,9 +19,9 @@
     <label>Month / महीना</label>
     <select name="month" required style="width:100%; padding:10px; border-radius:8px;
             border:1.5px solid #ccc; font-size:1rem; margin-bottom:12px;">
+      {% set names = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'] %}
       {% for m in range(1, 13) %}
-        {% set names = ['January','February','March','April','May','June',
-                        'July','August','September','October','November','December'] %}
         <option value="{{ m }}" {% if m == cur_month %}selected{% endif %}>
           {{ names[m-1] }}
         </option>
@@ -40,37 +39,14 @@
     <label>Admin Code / एडमिन कोड</label>
     <input name="code" type="password" placeholder="Enter admin code" required>
 
-    <button type="submit" id="submitBtn" style="background:#27ae60;">
-      ➕ Create New Month Sheet / नई शीट बनाएं
+    <button type="submit" id="submitBtn" style="background:#e67e22;">
+      🔄 Reset Month / महीना रीसेट करें
     </button>
 
     {% if msg %}
     <p class="{{ cls }}" style="text-align:center; margin-top:14px; font-size:0.95rem;">
       {{ msg }}
     </p>
-    {% endif %}
-
-    {% if download_links %}
-    <div style="margin-top:16px; background:#eafaf1; border:1.5px solid #27ae60;
-                border-radius:10px; padding:16px; text-align:center;">
-      <p style="font-weight:bold; color:#27ae60; margin:0 0 4px; font-size:1rem;">
-        📥 Download Old Month Files
-      </p>
-      <p style="font-size:0.82rem; color:#555; margin:0 0 12px;">
-        पुराने महीने की files download करें — सारा driver data इनमें है
-      </p>
-      {% for link in download_links %}
-      <a href="{{ link.url }}" download
-         style="display:block; background:#27ae60; color:#fff; text-decoration:none;
-                padding:11px; border-radius:8px; margin-bottom:8px; font-size:0.95rem;">
-        ⬇️ {{ link.label }}
-      </a>
-      {% endfor %}
-      <p style="font-size:0.78rem; color:#e74c3c; margin:8px 0 0;">
-        ⚠️ Download now — links expire when server restarts<br>
-        अभी download करें — server restart होने पर links expire हो जाएंगे
-      </p>
-    </div>
     {% endif %}
   </form>
 
@@ -83,16 +59,14 @@
                 position:relative; top:50%; transform:translateY(-50%); margin:auto;">
       <div style="font-size:2.2rem; margin-bottom:10px;">⚠️</div>
       <p style="font-weight:bold; color:#c0392b; margin:0 0 6px;">
-        A new sheet will be created for the new month.
+        This will clear ALL entries!
       </p>
-      <p style="font-weight:bold; color:#27ae60; margin:0 0 14px; font-size:0.92rem;">
-        ✅ Old data will NOT be deleted.
+      <p style="font-weight:bold; color:#c0392b; margin:0 0 14px; font-size:0.95rem;">
+        सभी पुरानी entries डिलीट हो जाएंगी!
       </p>
-      <p style="font-size:0.88rem; color:#555; margin:0 0 6px;">
-        नए महीने के लिए नई शीट बनेगी।
-      </p>
-      <p style="font-size:0.88rem; color:#27ae60; margin:0 0 20px;">
-        ✅ पुरानी शीट और data सुरक्षित रहेगा।
+      <p style="font-size:0.88rem; color:#555; margin:0 0 20px;">
+        Are you sure you want to reset the month?<br>
+        क्या आप वाकई महीना रीसेट करना चाहते हैं?
       </p>
       <div style="display:flex; gap:10px; justify-content:center;">
         <button id="confirmYes" style="background:#e74c3c; color:#fff; border:none;
@@ -128,10 +102,9 @@ form.addEventListener('submit', function(e) {
 document.getElementById('confirmYes').addEventListener('click', function() {
     modal.style.display = 'none';
     confirmed = true;
-    // Show loading state
     const btn = document.getElementById('submitBtn');
     btn.disabled = true;
-    btn.textContent = '⏳ Processing... / प्रोसेस हो रहा है...';
+    btn.textContent = '⏳ Updating... / अपडेट हो रहा है...';
     btn.style.background = '#95a5a6';
     form.submit();
 });
