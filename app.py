@@ -23,13 +23,11 @@ if not sa_json:
 creds = service_account.Credentials.from_service_account_info(
     json.loads(sa_json),
     scopes=[
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
+        "https://www.googleapis.com/auth/spreadsheets"
     ]
 )
 
 sheets = build("sheets", "v4", credentials=creds)
-drive  = build("drive",  "v3", credentials=creds)
 
 # ---------- Helpers ----------
 def today_date():
@@ -221,12 +219,11 @@ def ordinal_suffix(n):
         return "th"
     return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
 
-def copy_and_prepare_sheet(old_file_id, month, year, driver_info):
+def archive_and_prepare_sheet(file_id, sheet_name, month, year):
     """
-    1. Copy the existing Google Sheet file to a new file for the new month.
-    2. Update title row, dates, serial numbers in the new file.
-    3. Clear all data entry columns (C:I) so it's blank for new month.
-    4. Return new file_id.
+    1. Duplicate the current sheet tab as an archive (e.g. 'UP80JT4509_Feb_2026')
+    2. Update the original sheet tab with new month dates & clear data columns.
+    Old data stays safely in the archive tab forever.
     """
     days_in_month = calendar.monthrange(year, month)[1]
     month_name    = datetime(year, month, 1).strftime("%B")
@@ -235,32 +232,51 @@ def copy_and_prepare_sheet(old_file_id, month, year, driver_info):
     title_text    = (f" Vehicle Bill for the period from "
                      f"{first_ord} {month_name} {year} "
                      f"to {last_ord} {month_name} {year}")
-    new_name      = f"Brajwasi_{driver_info['sheet']}_{month_name}_{year}"
 
-    # --- Step 1: Copy file via Drive API ---
-    copied = drive.files().copy(
-        fileId=old_file_id,
-        body={"name": new_name}
+    # --- Get sheet metadata to find the sheetId ---
+    meta = sheets.spreadsheets().get(spreadsheetId=file_id).execute()
+    sheet_id = None
+    for s in meta["sheets"]:
+        if s["properties"]["title"] == sheet_name:
+            sheet_id = s["properties"]["sheetId"]
+            break
+    if sheet_id is None:
+        raise ValueError(f"Sheet tab '{sheet_name}' not found in file {file_id}")
+
+    # --- Figure out previous month name for archive tab ---
+    first_of_current = datetime(year, month, 1)
+    last_month_date  = first_of_current - timedelta(days=1)
+    archive_tab_name = f"{sheet_name}_{last_month_date.strftime('%b_%Y')}"
+
+    # --- Step 1: Duplicate current tab as archive ---
+    requests = [{
+        "duplicateSheet": {
+            "sourceSheetId": sheet_id,
+            "insertSheetIndex": 99,   # append at end
+            "newSheetName": archive_tab_name
+        }
+    }]
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=file_id,
+        body={"requests": requests}
     ).execute()
-    new_file_id = copied["id"]
 
-    # --- Step 2: Update title row A3 ---
-    sheet = driver_info["sheet"]
+    # --- Step 2: Update title row A3 on original sheet ---
     sheets.spreadsheets().values().update(
-        spreadsheetId=new_file_id,
-        range=f"{sheet}!A3",
+        spreadsheetId=file_id,
+        range=f"{sheet_name}!A3",
         valueInputOption="USER_ENTERED",
         body={"values": [[title_text]]}
     ).execute()
 
-    # --- Step 3: Write serial numbers + dates (col A & B, rows 8 onward) ---
+    # --- Step 3: Write serial numbers + new dates (col A & B) ---
     date_values = [
         [day, datetime(year, month, day).strftime("%d-%b-%y")]
         for day in range(1, days_in_month + 1)
     ]
     sheets.spreadsheets().values().update(
-        spreadsheetId=new_file_id,
-        range=f"{sheet}!A8:B{7 + days_in_month}",
+        spreadsheetId=file_id,
+        range=f"{sheet_name}!A8:B{7 + days_in_month}",
         valueInputOption="USER_ENTERED",
         body={"values": date_values}
     ).execute()
@@ -268,17 +284,17 @@ def copy_and_prepare_sheet(old_file_id, month, year, driver_info):
     # --- Step 4: Clear leftover date rows if new month is shorter ---
     if days_in_month < 31:
         sheets.spreadsheets().values().clear(
-            spreadsheetId=new_file_id,
-            range=f"{sheet}!A{8 + days_in_month}:I{7 + 31}"
+            spreadsheetId=file_id,
+            range=f"{sheet_name}!A{8 + days_in_month}:I{7 + 31}"
         ).execute()
 
-    # --- Step 5: Clear all data columns C:I for new month (blank slate) ---
+    # --- Step 5: Clear data columns C:I on original sheet ---
     sheets.spreadsheets().values().clear(
-        spreadsheetId=new_file_id,
-        range=f"{sheet}!C8:I{7 + days_in_month}"
+        spreadsheetId=file_id,
+        range=f"{sheet_name}!C8:I{7 + days_in_month}"
     ).execute()
 
-    return new_file_id
+    return archive_tab_name
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
@@ -294,30 +310,20 @@ def admin():
                 year       = int(request.form["year"])
                 month_name = datetime(year, month, 1).strftime("%B")
 
-                # Reload drivers fresh from disk each time
                 with open("driver.json", "r") as f:
                     drivers = json.load(f)
 
-                new_file_ids = {}
+                archived = []
                 for car, info in drivers.items():
-                    new_id = copy_and_prepare_sheet(info["file_id"], month, year, info)
-                    new_file_ids[car] = new_id
-
-                # Update driver.json with new file_ids
-                for car in drivers:
-                    drivers[car]["file_id"] = new_file_ids[car]
-
-                with open("driver.json", "w") as f:
-                    json.dump(drivers, f, indent=2)
-
-                # Reload in-memory DRIVERS
-                global DRIVERS
-                DRIVERS = drivers
+                    tab = archive_and_prepare_sheet(
+                        info["file_id"], info["sheet"], month, year
+                    )
+                    archived.append(f"{info['sheet']} → archived as '{tab}'")
 
                 days_in_month = calendar.monthrange(year, month)[1]
-                msg = (f"✅ New sheets created for {month_name} {year} "
-                       f"({days_in_month} days). "
-                       f"Old sheets are saved safely in Google Drive.")
+                msg = (f"✅ Done for {month_name} {year} ({days_in_month} days). "
+                       f"Old data archived as new tabs in same file: "
+                       + ", ".join(archived))
                 cls = "success"
 
             except Exception as e:
