@@ -49,6 +49,29 @@
       {{ msg }}
     </p>
     {% endif %}
+
+    {% if download_links %}
+    <div style="margin-top:16px; background:#eafaf1; border:1.5px solid #27ae60;
+                border-radius:10px; padding:16px; text-align:center;">
+      <p style="font-weight:bold; color:#27ae60; margin:0 0 4px; font-size:1rem;">
+        📥 Download Old Month Files
+      </p>
+      <p style="font-size:0.82rem; color:#555; margin:0 0 12px;">
+        पुराने महीने की files download करें — सारा driver data इनमें है
+      </p>
+      {% for link in download_links %}
+      <a href="{{ link.url }}" download
+         style="display:block; background:#27ae60; color:#fff; text-decoration:none;
+                padding:11px; border-radius:8px; margin-bottom:8px; font-size:0.95rem;">
+        ⬇️ {{ link.label }}
+      </a>
+      {% endfor %}
+      <p style="font-size:0.78rem; color:#e74c3c; margin:8px 0 0;">
+        ⚠️ Download now — links expire when server restarts<br>
+        अभी download करें — server restart होने पर links expire हो जाएंगे
+      </p>
+    </div>
+    {% endif %}
   </form>
 
   <!-- Confirm Modal -->
@@ -105,6 +128,11 @@ form.addEventListener('submit', function(e) {
 document.getElementById('confirmYes').addEventListener('click', function() {
     modal.style.display = 'none';
     confirmed = true;
+    // Show loading state
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Processing... / प्रोसेस हो रहा है...';
+    btn.style.background = '#95a5a6';
     form.submit();
 });
 
