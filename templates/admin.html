@@ -3,114 +3,202 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin – Reset Month</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<title>Admin – Brajwasi</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#0f1117; --card:#1a1f36; --card2:#222840; --accent:#4f8ef7;
+    --green:#10b981; --red:#ef4444; --orange:#f59e0b;
+    --text:#f1f5f9; --muted:#94a3b8; --border:#2e3558;
+    --input-bg:#141829; --radius:12px;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding-bottom:40px; }
+  .header { background:linear-gradient(135deg,var(--card),#1e2547); padding:18px 20px 14px; border-bottom:1px solid var(--border); }
+  .header-title { font-size:1.1rem; font-weight:700; color:var(--accent); }
+  .header-sub { font-size:0.75rem; color:var(--muted); margin-top:2px; }
+  .container { padding:16px; max-width:480px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:14px; }
+  .card-title { font-size:0.72rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:16px; }
+  label { display:block; font-size:0.8rem; font-weight:500; color:var(--muted); margin-bottom:6px; margin-top:12px; }
+  label:first-of-type { margin-top:0; }
+  select, input[type=password], input[type=text], textarea {
+    width:100%; background:var(--input-bg); border:1.5px solid var(--border);
+    border-radius:10px; color:var(--text); font-size:0.95rem;
+    padding:11px 14px; font-family:'Inter',sans-serif;
+    transition:border-color 0.2s;
+  }
+  select:focus, input:focus, textarea:focus { outline:none; border-color:var(--accent); }
+  textarea { resize:vertical; min-height:80px; }
+  .btn {
+    width:100%; padding:13px; border:none; border-radius:var(--radius);
+    font-size:0.95rem; font-weight:600; cursor:pointer; margin-top:14px;
+    transition:opacity 0.2s; color:#fff;
+  }
+  .btn:hover { opacity:0.9; }
+  .btn:disabled { opacity:0.5; cursor:not-allowed; }
+  .btn-orange { background:linear-gradient(135deg,#e67e22,#d35400); }
+  .btn-purple { background:linear-gradient(135deg,#7c3aed,#5b21b6); }
+  .msg { border-radius:10px; padding:12px 16px; font-size:0.88rem; margin-bottom:14px; font-weight:500; }
+  .success { background:#10b98120; border:1px solid #10b98140; color:#6ee7b7; }
+  .error   { background:#ef444420; border:1px solid #ef444440; color:#fca5a5; }
+  .back-link { text-align:center; margin-top:16px; }
+  .back-link a { color:var(--muted); font-size:0.85rem; text-decoration:none; }
+
+  /* Online drivers badge */
+  .subs-info { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+  .badge { background:var(--green); color:#fff; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:20px; }
+  .badge.zero { background:var(--border); color:var(--muted); }
+  .subs-list { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+  .sub-tag { background:var(--card2); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:0.78rem; color:var(--muted); }
+  .sub-tag.active { border-color:var(--green); color:var(--green); }
+
+  /* Modal */
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:999; align-items:center; justify-content:center; }
+  .modal-overlay.show { display:flex; }
+  .modal-box { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:28px 22px; max-width:320px; width:90%; text-align:center; }
+  .modal-icon { font-size:2.5rem; margin-bottom:12px; }
+  .modal-title { font-size:1rem; font-weight:700; color:var(--red); margin-bottom:6px; }
+  .modal-sub { font-size:0.85rem; color:var(--muted); margin-bottom:20px; line-height:1.5; }
+  .modal-btns { display:flex; gap:10px; }
+  .modal-btns button { flex:1; padding:11px; border-radius:10px; border:none; font-size:0.95rem; font-weight:600; cursor:pointer; }
+  .btn-confirm { background:var(--red); color:#fff; }
+  .btn-cancel  { background:var(--border); color:var(--text); }
+</style>
 </head>
 <body>
+
+<div class="header">
+  <div class="header-title">⚙️ Admin Panel</div>
+  <div class="header-sub">Brajwasi Travels — Management</div>
+</div>
+
 <div class="container">
-  <h2>🗓️ Month Reset</h2>
-  <p style="font-size:0.88rem; color:#555; text-align:center; margin-top:-8px;">
-    Updates all sheets: title, dates &amp; clears old entries<br>
-    <span style="font-size:0.83rem;">सभी शीट के dates, title और पुरानी entries अपडेट होंगी</span>
-  </p>
 
-  <form method="post" id="adminForm">
+  {% if msg %}
+  <div class="msg {{ cls }}">{{ msg }}</div>
+  {% endif %}
 
-    <label>Month / महीना</label>
-    <select name="month" required style="width:100%; padding:10px; border-radius:8px;
-            border:1.5px solid #ccc; font-size:1rem; margin-bottom:12px;">
-      {% set names = ['January','February','March','April','May','June',
-                      'July','August','September','October','November','December'] %}
-      {% for m in range(1, 13) %}
-        <option value="{{ m }}" {% if m == cur_month %}selected{% endif %}>
-          {{ names[m-1] }}
-        </option>
-      {% endfor %}
-    </select>
+  <!-- Push Notification Section -->
+  <div class="card">
+    <div class="card-title">🔔 Send Push Notification</div>
 
-    <label>Year / वर्ष</label>
-    <select name="year" required style="width:100%; padding:10px; border-radius:8px;
-            border:1.5px solid #ccc; font-size:1rem; margin-bottom:12px;">
-      {% for y in range(cur_year - 1, cur_year + 3) %}
-        <option value="{{ y }}" {% if y == cur_year %}selected{% endif %}>{{ y }}</option>
-      {% endfor %}
-    </select>
-
-    <label>Admin Code / एडमिन कोड</label>
-    <input name="code" type="password" placeholder="Enter admin code" required>
-
-    <button type="submit" id="submitBtn" style="background:#e67e22;">
-      🔄 Reset Month / महीना रीसेट करें
-    </button>
-
-    {% if msg %}
-    <p class="{{ cls }}" style="text-align:center; margin-top:14px; font-size:0.95rem;">
-      {{ msg }}
-    </p>
-    {% endif %}
-  </form>
-
-  <!-- Confirm Modal -->
-  <div id="confirmModal" style="display:none; position:fixed; top:0; left:0; width:100%;
-       height:100%; background:rgba(0,0,0,0.6); z-index:999;
-       align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:14px; padding:28px 22px; max-width:320px;
-                width:90%; text-align:center; box-shadow:0 8px 32px rgba(0,0,0,0.3);
-                position:relative; top:50%; transform:translateY(-50%); margin:auto;">
-      <div style="font-size:2.2rem; margin-bottom:10px;">⚠️</div>
-      <p style="font-weight:bold; color:#c0392b; margin:0 0 6px;">
-        This will clear ALL entries!
-      </p>
-      <p style="font-weight:bold; color:#c0392b; margin:0 0 14px; font-size:0.95rem;">
-        सभी पुरानी entries डिलीट हो जाएंगी!
-      </p>
-      <p style="font-size:0.88rem; color:#555; margin:0 0 20px;">
-        Are you sure you want to reset the month?<br>
-        क्या आप वाकई महीना रीसेट करना चाहते हैं?
-      </p>
-      <div style="display:flex; gap:10px; justify-content:center;">
-        <button id="confirmYes" style="background:#e74c3c; color:#fff; border:none;
-                padding:10px 16px; border-radius:8px; font-size:0.95rem;
-                cursor:pointer; flex:1;">
-          ✅ Yes / हाँ
-        </button>
-        <button id="confirmNo" style="background:#7f8c8d; color:#fff; border:none;
-                padding:10px 16px; border-radius:8px; font-size:0.95rem;
-                cursor:pointer; flex:1;">
-          ❌ Cancel / रद्द
-        </button>
-      </div>
+    <div class="subs-info">
+      <span>Active subscriptions:</span>
+      <span class="badge {% if subs|length == 0 %}zero{% endif %}">{{ subs|length }} drivers</span>
     </div>
+
+    {% if subs %}
+    <div class="subs-list">
+      {% for car in drivers %}
+        <span class="sub-tag {% if car in subs %}active{% endif %}">
+          {% if car in subs %}🟢{% else %}⚪{% endif %} {{ car }}
+        </span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="post" id="notifyForm">
+      <input type="hidden" name="action" value="notify">
+
+      <label>Send To / किसे भेजें</label>
+      <select name="target">
+        <option value="all">📢 All Drivers / सभी</option>
+        {% for car in drivers %}
+          <option value="{{ car }}">{{ car }}</option>
+        {% endfor %}
+      </select>
+
+      <label>Message / संदेश</label>
+      <textarea name="message" placeholder="Type your message here / संदेश लिखें..."></textarea>
+
+      <label>Admin Code</label>
+      <input type="password" name="code" placeholder="Enter admin code">
+
+      <button type="submit" class="btn btn-purple" id="notifyBtn">
+        📤 Send Notification
+      </button>
+    </form>
   </div>
 
-  <p style="text-align:center; margin-top:16px;">
-    <a href="/">← Back to Login</a>
-  </p>
+  <!-- Month Reset Section -->
+  <div class="card">
+    <div class="card-title">🗓️ Month Reset</div>
+    <p style="font-size:0.8rem; color:var(--muted); margin-bottom:14px; line-height:1.5;">
+      Updates all sheets: title, dates &amp; clears old entries.<br>
+      <span style="font-size:0.76rem;">सभी शीट के dates, title और पुरानी entries अपडेट होंगी।</span>
+    </p>
+
+    <form method="post" id="resetForm">
+      <input type="hidden" name="action" value="reset">
+
+      <label>Month / महीना</label>
+      {% set names = ['January','February','March','April','May','June','July','August','September','October','November','December'] %}
+      <select name="month">
+        {% for m in range(1, 13) %}
+          <option value="{{ m }}" {% if m == cur_month %}selected{% endif %}>{{ names[m-1] }}</option>
+        {% endfor %}
+      </select>
+
+      <label>Year / वर्ष</label>
+      <select name="year">
+        {% for y in range(cur_year - 1, cur_year + 3) %}
+          <option value="{{ y }}" {% if y == cur_year %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+
+      <label>Admin Code / एडमिन कोड</label>
+      <input type="password" name="code" placeholder="Enter admin code">
+
+      <button type="submit" class="btn btn-orange" id="resetBtn">
+        🔄 Reset Month / महीना रीसेट करें
+      </button>
+    </form>
+  </div>
+
+  <div class="back-link"><a href="/">← Back to Login</a></div>
+</div>
+
+<!-- Confirm Reset Modal -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal-box">
+    <div class="modal-icon">⚠️</div>
+    <div class="modal-title">This will clear ALL entries!<br><span style="font-size:0.88rem;">सभी entries डिलीट हो जाएंगी!</span></div>
+    <div class="modal-sub">Are you sure you want to reset the month?<br>क्या आप वाकई महीना रीसेट करना चाहते हैं?</div>
+    <div class="modal-btns">
+      <button class="btn-confirm" id="confirmYes">✅ Yes / हाँ</button>
+      <button class="btn-cancel"  id="confirmNo">❌ Cancel</button>
+    </div>
+  </div>
 </div>
 
 <script>
-const form = document.getElementById('adminForm');
-const modal = document.getElementById('confirmModal');
-let confirmed = false;
+const resetForm = document.getElementById('resetForm');
+const modal     = document.getElementById('confirmModal');
+const resetBtn  = document.getElementById('resetBtn');
+let confirmed   = false;
 
-form.addEventListener('submit', function(e) {
-    if (confirmed) return;
-    e.preventDefault();
-    modal.style.display = 'flex';
+resetForm.addEventListener('submit', function(e) {
+  if (confirmed) return;
+  e.preventDefault();
+  modal.classList.add('show');
+});
+document.getElementById('confirmYes').addEventListener('click', () => {
+  modal.classList.remove('show');
+  confirmed = true;
+  resetBtn.disabled = true;
+  resetBtn.textContent = '⏳ Updating...';
+  resetForm.submit();
+});
+document.getElementById('confirmNo').addEventListener('click', () => {
+  modal.classList.remove('show');
 });
 
-document.getElementById('confirmYes').addEventListener('click', function() {
-    modal.style.display = 'none';
-    confirmed = true;
-    const btn = document.getElementById('submitBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Updating... / अपडेट हो रहा है...';
-    btn.style.background = '#95a5a6';
-    form.submit();
-});
-
-document.getElementById('confirmNo').addEventListener('click', function() {
-    modal.style.display = 'none';
+// Notify button loading state
+document.getElementById('notifyForm').addEventListener('submit', function() {
+  const btn = document.getElementById('notifyBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Sending...';
 });
 </script>
 </body>
