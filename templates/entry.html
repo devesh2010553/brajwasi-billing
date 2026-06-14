@@ -5,198 +5,170 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Daily Entry – Brajwasi</title>
 <link rel="manifest" href="{{ url_for('manifest') }}">
-<meta name="theme-color" content="#1a1f36">
+<meta name="theme-color" content="#1e6ebb">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #0f1117;
-    --card: #1a1f36;
-    --card2: #222840;
-    --accent: #4f8ef7;
-    --accent2: #7c3aed;
-    --green: #10b981;
-    --red: #ef4444;
-    --orange: #f59e0b;
-    --text: #f1f5f9;
-    --muted: #94a3b8;
-    --border: #2e3558;
-    --input-bg: #141829;
-    --radius: 12px;
-    --mic-size: 38px;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Inter', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding-bottom: 40px;
-  }
+:root {
+  --bg: #e8f4fd;
+  --card: #ffffff;
+  --card2: #f0f8ff;
+  --accent: #1e6ebb;
+  --accent2: #1557a0;
+  --accent-light: #dbeafe;
+  --green: #16a34a;
+  --red: #dc2626;
+  --orange: #d97706;
+  --text: #1e293b;
+  --muted: #64748b;
+  --border: #bfdbfe;
+  --border2: #93c5fd;
+  --input-bg: #f8fbff;
+  --radius: 12px;
+  --shadow: 0 2px 12px rgba(30,110,187,0.10);
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg); color: var(--text); min-height:100vh; padding-bottom:50px; }
 
-  /* Header */
-  .header {
-    background: linear-gradient(135deg, var(--card) 0%, #1e2547 100%);
-    padding: 18px 20px 14px;
-    border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .header-title { font-size: 1.1rem; font-weight: 700; color: var(--accent); }
-  .header-sub { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
-  .logout-btn {
-    background: transparent; border: 1px solid var(--border);
-    color: var(--muted); padding: 6px 12px; border-radius: 8px;
-    font-size: 0.8rem; cursor: pointer; text-decoration: none;
-  }
+.header {
+  background: linear-gradient(135deg, #1e6ebb 0%, #1557a0 100%);
+  padding: 16px 18px 14px;
+  display: flex; align-items: center; justify-content: space-between;
+  box-shadow: 0 2px 8px rgba(30,110,187,0.25);
+}
+.header-title { font-size: 1.05rem; font-weight: 700; color: #fff; }
+.header-sub   { font-size: 0.73rem; color: #bfdbfe; margin-top: 2px; }
+.logout-btn {
+  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+  color: #fff; padding: 6px 12px; border-radius: 8px;
+  font-size: 0.78rem; cursor: pointer; text-decoration: none;
+}
 
-  /* Notification bar */
-  #notifBar {
-    margin: 14px 16px 0;
-    background: linear-gradient(135deg, #1e3a5f, #1a2d4a);
-    border: 1px solid #2563eb44;
-    border-radius: var(--radius);
-    padding: 12px 16px;
-    display: flex; align-items: center; gap: 12px;
-    cursor: pointer;
-  }
-  #notifBar .notif-icon { font-size: 1.4rem; }
-  #notifBar .notif-text { flex: 1; }
-  #notifBar .notif-text strong { font-size: 0.88rem; color: #93c5fd; display: block; }
-  #notifBar .notif-text span { font-size: 0.78rem; color: var(--muted); }
-  #notifBar.granted { background: linear-gradient(135deg, #064e3b, #065f46); border-color: #10b98144; }
-  #notifBar.granted .notif-text strong { color: #6ee7b7; }
+/* Floating notification button - small corner */
+#notifBtn {
+  position: fixed; bottom: 18px; right: 18px; z-index: 100;
+  width: 44px; height: 44px; border-radius: 50%;
+  background: var(--accent); color: #fff; border: none;
+  font-size: 1.1rem; cursor: pointer;
+  box-shadow: 0 3px 12px rgba(30,110,187,0.4);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+#notifBtn:hover { background: var(--accent2); transform: scale(1.08); }
+#notifBtn.granted { background: var(--green); }
+#notifBtn.denied  { background: #94a3b8; }
+#notifTooltip {
+  position: fixed; bottom: 70px; right: 14px; z-index: 101;
+  background: var(--text); color: #fff; font-size: 0.75rem;
+  padding: 6px 10px; border-radius: 8px; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s;
+}
+#notifBtn:hover + #notifTooltip,
+#notifTooltip.show { opacity: 1; }
 
-  /* Main container */
-  .container { padding: 16px; max-width: 480px; margin: 0 auto; }
+/* PWA Install */
+#installBanner {
+  display: none; margin: 12px 14px 0;
+  background: #dbeafe; border: 1.5px solid var(--border2);
+  border-radius: var(--radius); padding: 12px 14px; text-align: center;
+}
+#installBanner p { font-size: 0.85rem; color: var(--accent); font-weight: 600; margin-bottom: 4px; }
+#installBanner span { font-size: 0.78rem; color: var(--muted); }
+#installBtn {
+  margin-top: 8px; width: 100%; background: var(--accent); color: #fff;
+  border: none; padding: 9px; border-radius: 8px; font-size: 0.9rem; cursor: pointer; font-weight: 600;
+}
 
-  /* Section card */
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    margin-bottom: 14px;
-  }
-  .card-title {
-    font-size: 0.72rem; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px;
-  }
+.container { padding: 14px; max-width: 480px; margin: 0 auto; }
 
-  /* Field row */
-  .field { margin-bottom: 14px; }
-  .field:last-child { margin-bottom: 0; }
-  .field label {
-    display: block; font-size: 0.8rem; font-weight: 500;
-    color: var(--muted); margin-bottom: 6px;
-  }
-  .input-row {
-    display: flex; gap: 8px; align-items: center;
-  }
-  .input-row input {
-    flex: 1; background: var(--input-bg); border: 1.5px solid var(--border);
-    border-radius: 10px; color: var(--text); font-size: 1rem;
-    padding: 11px 14px; font-family: 'Inter', sans-serif;
-    transition: border-color 0.2s;
-    -webkit-appearance: none;
-  }
-  .input-row input:focus { outline: none; border-color: var(--accent); }
-  .input-row input[type="date"] { color-scheme: dark; }
-  .input-row input[type="time"] { color-scheme: dark; }
-  .input-row input.filled { border-color: var(--green); }
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+.card-title {
+  font-size: 0.7rem; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
 
-  /* Mic button */
-  .mic-btn {
-    width: var(--mic-size); height: var(--mic-size);
-    border-radius: 10px; border: 1.5px solid var(--border);
-    background: var(--card2); color: var(--muted);
-    font-size: 1.1rem; cursor: pointer; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-    transition: all 0.2s; position: relative;
-  }
-  .mic-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .mic-btn.recording {
-    background: #ef444422; border-color: var(--red);
-    color: var(--red); animation: pulse 1s infinite;
-  }
-  .mic-btn.processing {
-    background: #f59e0b22; border-color: var(--orange); color: var(--orange);
-  }
-  .mic-btn.success {
-    background: #10b98122; border-color: var(--green); color: var(--green);
-  }
-  @keyframes pulse {
-    0%, 100% { box-shadow: 0 0 0 0 #ef444440; }
-    50% { box-shadow: 0 0 0 6px #ef444410; }
-  }
+.field { margin-bottom: 12px; }
+.field:last-child { margin-bottom: 0; }
+.field label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
 
-  /* Voice status bubble */
-  #voiceStatus {
-    display: none; margin: 8px 0;
-    background: var(--card2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 8px 12px;
-    font-size: 0.8rem; color: var(--muted);
-  }
-  #voiceStatus.show { display: block; }
-  #voiceStatus .raw { color: var(--accent); font-style: italic; }
-  #voiceStatus .result { color: var(--green); font-weight: 600; }
-  #voiceStatus .error { color: var(--red); }
+.input-row { display: flex; gap: 7px; align-items: center; }
+.input-row input {
+  flex: 1; background: var(--input-bg); border: 1.5px solid var(--border);
+  border-radius: 9px; color: var(--text); font-size: 0.97rem;
+  padding: 10px 12px; transition: border-color 0.2s;
+}
+.input-row input:focus { outline: none; border-color: var(--accent); background: #fff; }
+.input-row input.filled { border-color: var(--green); background: #f0fdf4; }
+.input-row input[type="date"],
+.input-row input[type="time"] { color-scheme: light; }
 
-  /* Save button */
-  .save-btn {
-    width: 100%; padding: 14px; background: linear-gradient(135deg, var(--accent), var(--accent2));
-    color: #fff; border: none; border-radius: var(--radius);
-    font-size: 1rem; font-weight: 600; cursor: pointer;
-    margin-top: 4px; transition: opacity 0.2s; letter-spacing: 0.02em;
-  }
-  .save-btn:hover { opacity: 0.9; }
-  .save-btn:active { opacity: 0.8; }
-  .save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Mic button */
+.mic-btn {
+  width: 40px; height: 40px; border-radius: 9px;
+  border: 1.5px solid var(--border); background: var(--card2);
+  color: var(--muted); font-size: 1rem; cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.mic-btn:hover { border-color: var(--accent); background: var(--accent-light); color: var(--accent); }
+.mic-btn.recording {
+  background: #fef2f2; border-color: var(--red); color: var(--red);
+  animation: pulse 1s infinite;
+}
+.mic-btn.processing { background: #fffbeb; border-color: var(--orange); color: var(--orange); }
+.mic-btn.success    { background: #f0fdf4; border-color: var(--green); color: var(--green); }
+@keyframes pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.3); }
+  50%      { box-shadow: 0 0 0 5px rgba(220,38,38,0.05); }
+}
 
-  /* Message */
-  .msg {
-    border-radius: 10px; padding: 12px 16px; font-size: 0.88rem;
-    margin-bottom: 14px; font-weight: 500;
-  }
-  .success { background: #10b98120; border: 1px solid #10b98140; color: #6ee7b7; }
-  .error   { background: #ef444420; border: 1px solid #ef444440; color: #fca5a5; }
+#voiceStatus {
+  display: none; margin: 8px 0 2px;
+  background: #f0f8ff; border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px; font-size: 0.78rem; color: var(--muted);
+}
+#voiceStatus.show { display: block; }
+.raw    { color: var(--accent); font-style: italic; }
+.vresult { color: var(--green); font-weight: 700; }
+.verror  { color: var(--red); }
 
-  /* Confirmation Modal */
-  .modal-overlay {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.75); z-index: 999;
-    align-items: center; justify-content: center;
-  }
-  .modal-overlay.show { display: flex; }
-  .modal-box {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 16px; padding: 28px 22px; max-width: 320px;
-    width: 90%; text-align: center;
-  }
-  .modal-icon { font-size: 2.5rem; margin-bottom: 12px; }
-  .modal-title { font-size: 1rem; font-weight: 700; color: var(--red); margin-bottom: 6px; }
-  .modal-sub   { font-size: 0.85rem; color: var(--muted); margin-bottom: 20px; line-height: 1.5; }
-  .modal-btns  { display: flex; gap: 10px; }
-  .modal-btns button {
-    flex: 1; padding: 11px; border-radius: 10px; border: none;
-    font-size: 0.95rem; font-weight: 600; cursor: pointer;
-  }
-  .btn-confirm { background: var(--red); color: #fff; }
-  .btn-cancel  { background: var(--border); color: var(--text); }
+.save-btn {
+  width: 100%; padding: 13px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff; border: none; border-radius: var(--radius);
+  font-size: 1rem; font-weight: 700; cursor: pointer; margin-top: 2px;
+  box-shadow: 0 3px 10px rgba(30,110,187,0.3); transition: opacity 0.2s;
+}
+.save-btn:hover { opacity: 0.92; }
+.save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-  /* PWA Install Banner */
-  #installBanner {
-    display: none; margin: 14px 16px 0;
-    background: linear-gradient(135deg, #1e3a5f, #1a2d4a);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius); padding: 14px 16px; text-align: center;
-  }
-  #installBanner p { font-size: 0.85rem; color: #93c5fd; margin-bottom: 4px; font-weight: 600; }
-  #installBanner span { font-size: 0.78rem; color: var(--muted); }
-  #installBtn {
-    margin-top: 10px; width: 100%; background: var(--accent); color: #fff;
-    border: none; padding: 10px; border-radius: 8px;
-    font-size: 0.95rem; cursor: pointer; font-weight: 600;
-  }
+.msg { border-radius: 10px; padding: 11px 14px; font-size: 0.87rem; margin-bottom: 12px; font-weight: 500; }
+.success { background: #f0fdf4; border: 1px solid #86efac; color: var(--green); }
+.error   { background: #fef2f2; border: 1px solid #fca5a5; color: var(--red); }
+
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45); z-index: 999;
+  align-items: center; justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal-box {
+  background: #fff; border: 1px solid var(--border);
+  border-radius: 16px; padding: 26px 20px; max-width: 310px;
+  width: 92%; text-align: center; box-shadow: 0 8px 32px rgba(30,110,187,0.15);
+}
+.modal-icon  { font-size: 2.2rem; margin-bottom: 10px; }
+.modal-title { font-size: 0.97rem; font-weight: 700; color: var(--red); margin-bottom: 6px; }
+.modal-sub   { font-size: 0.82rem; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
+.modal-btns  { display: flex; gap: 9px; }
+.modal-btns button { flex:1; padding:10px; border-radius:9px; border:none; font-size:0.9rem; font-weight:600; cursor:pointer; }
+.btn-confirm { background: var(--red); color: #fff; }
+.btn-cancel  { background: #f1f5f9; color: var(--text); }
 </style>
 </head>
 <body>
@@ -209,20 +181,14 @@
   <a href="/logout" class="logout-btn">Logout</a>
 </div>
 
-<!-- Notification Permission Bar -->
-<div id="notifBar">
-  <div class="notif-icon">🔔</div>
-  <div class="notif-text">
-    <strong id="notifTitle">Allow Notifications</strong>
-    <span id="notifSub">Admin messages and alerts</span>
-  </div>
-  <span id="notifArrow" style="color:var(--muted); font-size:1.1rem;">›</span>
-</div>
+<!-- Small corner notification button -->
+<button id="notifBtn" title="Notifications">🔔</button>
+<div id="notifTooltip">Enable notifications</div>
 
 <!-- PWA Install Banner -->
 <div id="installBanner">
   <p>📲 Install App / ऐप इंस्टॉल करें</p>
-  <span>Faster access & offline use</span>
+  <span>Faster access &amp; works offline</span>
   <button id="installBtn">⬇️ Install</button>
 </div>
 
@@ -236,7 +202,6 @@
 
   <form id="entryForm" method="post">
 
-    <!-- Date -->
     <div class="card">
       <div class="card-title">📅 Entry Date</div>
       <div class="field">
@@ -246,55 +211,51 @@
       </div>
     </div>
 
-    <!-- KM Readings -->
     <div class="card">
       <div class="card-title">🛣️ KM Readings</div>
       <div class="field">
         <label>Opening KM</label>
         <div class="input-row">
           <input id="opening" name="opening" type="number" placeholder="e.g. 12340" required>
-          <button type="button" class="mic-btn" data-target="opening" data-type="number" title="Speak opening KM">🎤</button>
+          <button type="button" class="mic-btn" data-target="opening" data-type="number" title="Speak">🎤</button>
         </div>
       </div>
       <div class="field">
         <label>Closing KM</label>
         <div class="input-row">
           <input id="closing" name="closing" type="number" placeholder="e.g. 12430" required>
-          <button type="button" class="mic-btn" data-target="closing" data-type="number" title="Speak closing KM">🎤</button>
+          <button type="button" class="mic-btn" data-target="closing" data-type="number" title="Speak">🎤</button>
         </div>
       </div>
     </div>
 
-    <!-- Timing -->
     <div class="card">
       <div class="card-title">⏰ Duty Timing</div>
       <div class="field">
         <label>Start Time</label>
         <div class="input-row">
           <input id="start" name="start" type="time" required>
-          <button type="button" class="mic-btn" data-target="start" data-type="time" title="Speak start time">🎤</button>
+          <button type="button" class="mic-btn" data-target="start" data-type="time" title="Speak">🎤</button>
         </div>
       </div>
       <div class="field">
         <label>End Time</label>
         <div class="input-row">
           <input id="end" name="end" type="time" required>
-          <button type="button" class="mic-btn" data-target="end" data-type="time" title="Speak end time">🎤</button>
+          <button type="button" class="mic-btn" data-target="end" data-type="time" title="Speak">🎤</button>
         </div>
       </div>
     </div>
 
     <button type="submit" class="save-btn" id="saveBtn">💾 Save Entry</button>
-
   </form>
 </div>
 
-<!-- Overwrite Confirmation Modal -->
 <div class="modal-overlay" id="confirmModal">
   <div class="modal-box">
     <div class="modal-icon">⚠️</div>
-    <div class="modal-title">Entry already filled!<br><span style="font-size:0.9rem">इस तारीख की एंट्री पहले से भरी है!</span></div>
-    <div class="modal-sub">Do you want to overwrite it?<br>क्या आप इसे बदलना चाहते हैं?</div>
+    <div class="modal-title">Entry already filled!<br><small style="font-size:0.85rem">इस तारीख की एंट्री पहले से भरी है!</small></div>
+    <div class="modal-sub">Overwrite it?<br>क्या आप इसे बदलना चाहते हैं?</div>
     <div class="modal-btns">
       <button class="btn-confirm" id="confirmYes">✅ Yes / हाँ</button>
       <button class="btn-cancel"  id="confirmNo">❌ Cancel</button>
@@ -305,89 +266,77 @@
 <script>
 const VAPID_PUBLIC_KEY = "{{ vapid_public_key }}";
 
-// ── Push Notifications ──────────────────────────────────────────────────────
-const notifBar   = document.getElementById('notifBar');
-const notifTitle = document.getElementById('notifTitle');
-const notifSub   = document.getElementById('notifSub');
-const notifArrow = document.getElementById('notifArrow');
+// ── Notification button ──────────────────────────────────────────────────────
+const notifBtn     = document.getElementById('notifBtn');
+const notifTooltip = document.getElementById('notifTooltip');
 
-function urlB64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw     = window.atob(base64);
+function urlB64ToUint8Array(b64) {
+  const pad  = '='.repeat((4 - b64.length % 4) % 4);
+  const raw  = atob((b64 + pad).replace(/-/g,'+').replace(/_/g,'/'));
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
 
-async function subscribePush() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+function updateNotifUI() {
+  if (!('Notification' in window)) { notifBtn.style.display='none'; return; }
+  if (Notification.permission === 'granted') {
+    notifBtn.classList.add('granted');
+    notifBtn.textContent = '🔔';
+    notifTooltip.textContent = 'Notifications ON ✓';
+  } else if (Notification.permission === 'denied') {
+    notifBtn.classList.add('denied');
+    notifBtn.textContent = '🔕';
+    notifTooltip.textContent = 'Blocked in browser settings';
+  } else {
+    notifTooltip.textContent = 'Tap to enable notifications';
+  }
+}
+updateNotifUI();
+
+notifBtn.addEventListener('click', async () => {
+  if (Notification.permission === 'granted') {
+    notifTooltip.classList.add('show');
+    setTimeout(() => notifTooltip.classList.remove('show'), 2000);
+    return;
+  }
   try {
     const reg  = await navigator.serviceWorker.ready;
     const perm = await Notification.requestPermission();
-    if (perm !== 'granted') return;
-
-    const sub = await reg.pushManager.subscribe({
+    if (perm !== 'granted') { updateNotifUI(); return; }
+    const sub  = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlB64ToUint8Array(VAPID_PUBLIC_KEY)
     });
-
     await fetch('/subscribe-push', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(sub.toJSON())
     });
-
-    notifBar.classList.add('granted');
-    notifTitle.textContent = '✅ Notifications enabled';
-    notifSub.textContent   = 'You will receive admin alerts';
-    notifArrow.style.display = 'none';
-  } catch(e) {
-    notifSub.textContent = 'Could not enable notifications';
-  }
-}
-
-function updateNotifBar() {
-  if (!('Notification' in window)) {
-    notifBar.style.display = 'none'; return;
-  }
-  if (Notification.permission === 'granted') {
-    notifBar.classList.add('granted');
-    notifTitle.textContent = '✅ Notifications enabled';
-    notifSub.textContent   = 'You will receive admin alerts';
-    notifArrow.style.display = 'none';
-  } else if (Notification.permission === 'denied') {
-    notifTitle.textContent = '🔕 Notifications blocked';
-    notifSub.textContent   = 'Enable in browser settings';
-    notifArrow.style.display = 'none';
-  }
-}
-updateNotifBar();
-notifBar.addEventListener('click', () => {
-  if (Notification.permission !== 'granted') subscribePush();
+    updateNotifUI();
+    notifTooltip.textContent = 'Notifications enabled! ✓';
+    notifTooltip.classList.add('show');
+    setTimeout(() => notifTooltip.classList.remove('show'), 2500);
+  } catch(e) { console.log('Push error:', e); updateNotifUI(); }
 });
 
 // ── Service Worker ───────────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/service-worker.js')
-    .then(() => console.log('SW registered'))
-    .catch(e => console.log('SW error', e));
+  navigator.serviceWorker.register('/service-worker.js').catch(e => console.log('SW error',e));
 }
 
 // ── PWA Install ──────────────────────────────────────────────────────────────
 let deferredPrompt = null;
 const installBanner = document.getElementById('installBanner');
-const installBtn    = document.getElementById('installBtn');
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); deferredPrompt = e;
   installBanner.style.display = 'block';
 });
-installBtn.addEventListener('click', async () => {
+document.getElementById('installBtn').addEventListener('click', async () => {
   if (!deferredPrompt) return;
   deferredPrompt.prompt();
   const {outcome} = await deferredPrompt.userChoice;
-  if (outcome === 'accepted') installBanner.style.display = 'none';
+  if (outcome==='accepted') installBanner.style.display='none';
   deferredPrompt = null;
 });
-window.addEventListener('appinstalled', () => { installBanner.style.display = 'none'; });
+window.addEventListener('appinstalled', () => { installBanner.style.display='none'; });
 
 // ── Opening KM auto-fill ─────────────────────────────────────────────────────
 const dateInput   = document.getElementById('entry_date');
@@ -397,7 +346,7 @@ async function fetchLastClosing(dateVal) {
   if (!dateVal || openingInput.dataset.manuallyEdited) return;
   try {
     const res  = await fetch('/get-last-closing', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+      method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({entry_date: dateVal})
     });
     const data = await res.json();
@@ -424,103 +373,73 @@ const voiceStatus = document.getElementById('voiceStatus');
 let activeRecorder = null;
 let activeBtn      = null;
 
-function showStatus(html, type='') {
-  voiceStatus.className = 'show' + (type ? ' '+type : '');
-  voiceStatus.innerHTML = html;
-}
-function hideStatus() {
-  voiceStatus.className = '';
-  voiceStatus.innerHTML = '';
-}
+function showStatus(html) { voiceStatus.className='show'; voiceStatus.innerHTML=html; }
+function hideStatus()     { voiceStatus.className=''; voiceStatus.innerHTML=''; }
 
 async function recordAndTranscribe(btn) {
   const targetId = btn.dataset.target;
-  const type     = btn.dataset.type;
 
-  // Stop if already recording this button
-  if (activeBtn === btn && activeRecorder) {
-    activeRecorder.stop();
-    return;
-  }
-  // Stop any other recording
-  if (activeRecorder) { activeRecorder.stop(); }
+  if (activeBtn === btn && activeRecorder) { activeRecorder.stop(); return; }
+  if (activeRecorder) activeRecorder.stop();
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
-    const recorder = new MediaRecorder(stream, {mimeType: 'audio/webm'});
+    const stream   = await navigator.mediaDevices.getUserMedia({audio:true});
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+    const recorder = new MediaRecorder(stream, {mimeType});
     const chunks   = [];
 
-    activeRecorder = recorder;
-    activeBtn      = btn;
-    btn.classList.add('recording');
-    btn.textContent = '⏹️';
-    showStatus('🎙️ Recording... tap again to stop / बोलें, फिर रोकने के लिए दोबारा टैप करें');
+    activeRecorder = recorder; activeBtn = btn;
+    btn.classList.add('recording'); btn.textContent = '⏹️';
+    showStatus('🎙️ <b>Recording...</b> बोलें — रोकने के लिए दोबारा टैप करें');
 
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    recorder.ondataavailable = e => { if (e.data.size>0) chunks.push(e.data); };
 
     recorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      activeRecorder = null; activeBtn = null;
-      btn.classList.remove('recording');
-      btn.classList.add('processing');
-      btn.textContent = '⏳';
-      showStatus('⏳ Processing... / प्रोसेस हो रहा है...');
+      stream.getTracks().forEach(t=>t.stop());
+      activeRecorder=null; activeBtn=null;
+      btn.classList.remove('recording'); btn.classList.add('processing'); btn.textContent='⏳';
+      showStatus('⏳ Processing... समझ रहे हैं...');
 
       try {
-        const blob     = new Blob(chunks, {type: 'audio/webm'});
+        const blob     = new Blob(chunks, {type: mimeType});
         const formData = new FormData();
-        formData.append('audio', blob, 'recording.webm');
+        formData.append('audio', blob, 'rec.' + (mimeType.includes('mp4') ? 'mp4' : 'webm'));
 
-        const res  = await fetch('/transcribe', {method: 'POST', body: formData});
+        const res  = await fetch('/transcribe', {method:'POST', body: formData});
         const data = await res.json();
-
         if (data.error) throw new Error(data.error);
 
         const parsed = data.parsed;
         const raw    = data.raw;
 
         if (!parsed) {
-          showStatus(`<span class="error">❌ Could not understand. Try again.<br>समझ नहीं आया, दोबारा बोलें</span><br><small class="raw">"${raw}"</small>`);
-          btn.classList.remove('processing');
-          btn.textContent = '🎤';
-          setTimeout(hideStatus, 4000);
-          return;
+          showStatus(`<span class="verror">❌ समझ नहीं आया — दोबारा बोलें</span><br><small class="raw">"${raw}"</small>`);
+          btn.classList.remove('processing'); btn.textContent='🎤';
+          setTimeout(hideStatus, 4000); return;
         }
 
-        // Fill the field
         const field = document.getElementById(targetId);
         field.value = parsed;
         field.classList.add('filled');
         field.dispatchEvent(new Event('input'));
 
-        showStatus(`<span class="result">✅ ${parsed}</span> &nbsp;<small class="raw">"${raw}"</small>`);
-        btn.classList.remove('processing');
-        btn.classList.add('success');
-        btn.textContent = '✅';
-        setTimeout(() => {
-          btn.classList.remove('success');
-          btn.textContent = '🎤';
-          hideStatus();
-        }, 3000);
+        showStatus(`<span class="vresult">✅ ${parsed}</span> &nbsp;<small class="raw">"${raw}"</small>`);
+        btn.classList.remove('processing'); btn.classList.add('success'); btn.textContent='✅';
+        setTimeout(() => { btn.classList.remove('success'); btn.textContent='🎤'; hideStatus(); }, 3000);
 
       } catch(err) {
-        showStatus(`<span class="error">❌ Error: ${err.message}</span>`);
-        btn.classList.remove('processing');
-        btn.textContent = '🎤';
+        showStatus(`<span class="verror">❌ ${err.message}</span>`);
+        btn.classList.remove('processing'); btn.textContent='🎤';
         setTimeout(hideStatus, 4000);
       }
     };
 
     recorder.start();
-
-    // Auto-stop after 10 seconds
-    setTimeout(() => {
-      if (recorder.state === 'recording') recorder.stop();
-    }, 10000);
+    setTimeout(() => { if (recorder.state==='recording') recorder.stop(); }, 10000);
 
   } catch(err) {
-    btn.textContent = '🎤';
-    showStatus('<span class="error">❌ Mic access denied / माइक्रोफोन की अनुमति नहीं</span>');
+    btn.textContent='🎤';
+    showStatus('<span class="verror">❌ Mic access denied — माइक की अनुमति दें</span>');
     setTimeout(hideStatus, 3000);
   }
 }
@@ -529,7 +448,7 @@ document.querySelectorAll('.mic-btn').forEach(btn => {
   btn.addEventListener('click', () => recordAndTranscribe(btn));
 });
 
-// ── Form submit with duplicate check ────────────────────────────────────────
+// ── Form submit ──────────────────────────────────────────────────────────────
 const form    = document.getElementById('entryForm');
 const modal   = document.getElementById('confirmModal');
 const saveBtn = document.getElementById('saveBtn');
@@ -538,37 +457,22 @@ let confirmed = false;
 form.addEventListener('submit', async function(e) {
   if (confirmed) return;
   e.preventDefault();
-  const dateVal = dateInput.value;
-  if (!dateVal) { confirmed = true; form.submit(); return; }
   try {
     const res  = await fetch('/check-entry', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({entry_date: dateVal})
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({entry_date: dateInput.value})
     });
     const data = await res.json();
-    if (data.filled) {
-      modal.classList.add('show');
-    } else {
-      confirmed = true;
-      saveBtn.disabled = true;
-      saveBtn.textContent = '⏳ Saving...';
-      form.submit();
-    }
-  } catch(e) {
-    confirmed = true; form.submit();
-  }
+    if (data.filled) { modal.classList.add('show'); }
+    else { confirmed=true; saveBtn.disabled=true; saveBtn.textContent='⏳ Saving...'; form.submit(); }
+  } catch(e) { confirmed=true; form.submit(); }
 });
 
 document.getElementById('confirmYes').addEventListener('click', () => {
-  modal.classList.remove('show');
-  confirmed = true;
-  saveBtn.disabled = true;
-  saveBtn.textContent = '⏳ Saving...';
-  form.submit();
+  modal.classList.remove('show'); confirmed=true;
+  saveBtn.disabled=true; saveBtn.textContent='⏳ Saving...'; form.submit();
 });
-document.getElementById('confirmNo').addEventListener('click', () => {
-  modal.classList.remove('show');
-});
+document.getElementById('confirmNo').addEventListener('click', () => modal.classList.remove('show'));
 </script>
 </body>
 </html>

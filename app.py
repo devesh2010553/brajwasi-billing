@@ -4,19 +4,17 @@ from datetime import datetime, timedelta, time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from pywebpush import webpush, WebPushException
+from py_vapid import Vapid
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 ADMIN_CODE = os.getenv("ADMIN_CODE", "admin1234")
 
-# ---------- SESSION LIFETIME (10 YEARS) ----------
 app.permanent_session_lifetime = timedelta(days=3650)
 
-# ---------- Load drivers ----------
 with open("driver.json", "r") as f:
     DRIVERS = json.load(f)
 
-# ---------- Google Auth ----------
 sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 if not sa_json:
     raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON not set")
@@ -27,12 +25,11 @@ creds = service_account.Credentials.from_service_account_info(
 )
 sheets = build("sheets", "v4", credentials=creds)
 
-# ---------- VAPID Keys ----------
-VAPID_PUBLIC_KEY  = os.getenv("VAPID_PUBLIC_KEY",  "BN2Fj08Qoy8TsV0glz8yxg7x6vSkqrJTEWR7lumMnHmXdb0DY1zKOzDY2rCqw-T58LcGU2xNgVnAmXPh6sjO_ok")
-VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "-SQGm7yHMjF27t8E7rnDLVUEI1yk-DfDqyGpiE5g6bw")
+# ---------- VAPID ----------
+VAPID_PUBLIC_KEY  = os.getenv("VAPID_PUBLIC_KEY",  "BI495kOQBEdy0aSHpJfT1bpzOmlryP__uLVreDYYrA2zsqEirtPSDrX7CGTvol6oygSPvTcBQ_RLwXDMPqcFDQo")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "Hg1eASB4wKsblPHdoZyvEVihWjYQxbNNaBPUkS7Rxzs")
 VAPID_EMAIL       = os.getenv("VAPID_EMAIL", "mailto:admin@brajwasitravels.com")
 
-# ---------- Push subscription store (file-based) ----------
 SUBS_FILE = "subscriptions.json"
 
 def load_subs():
@@ -44,6 +41,15 @@ def load_subs():
 def save_subs(subs):
     with open(SUBS_FILE, "w") as f:
         json.dump(subs, f, indent=2)
+
+def send_push(sub, message, title="Brajwasi Travels 🚗"):
+    vapid = Vapid.from_string(private_key=VAPID_PRIVATE_KEY)
+    webpush(
+        subscription_info=sub,
+        data=json.dumps({"title": title, "body": message}),
+        vapid_private_key=vapid.private_key,
+        vapid_claims={"sub": VAPID_EMAIL}
+    )
 
 # ---------- Helpers ----------
 def today_date():
@@ -91,7 +97,7 @@ def ordinal_suffix(n):
         return "th"
     return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
 
-# ---------- PWA Routes ----------
+# ---------- PWA ----------
 @app.route('/manifest.json')
 def manifest():
     return send_from_directory(os.getcwd(), 'manifest.json')
@@ -187,7 +193,7 @@ def check_entry():
     except Exception as e:
         return jsonify({"filled": False, "error": str(e)})
 
-# ---------- Get last closing KM ----------
+# ---------- Last closing KM ----------
 @app.route("/get-last-closing", methods=["POST"])
 def get_last_closing():
     if "car" not in session:
@@ -225,51 +231,83 @@ def transcribe():
         if not groq_key:
             return jsonify({"error": "GROQ_API_KEY not set"}), 500
 
-        # Send to Groq Whisper
         resp = req_lib.post(
             "https://api.groq.com/openai/v1/audio/transcriptions",
             headers={"Authorization": f"Bearer {groq_key}"},
-            files={"file": (audio_file.filename or "audio.webm", audio_file.read(), audio_file.content_type or "audio/webm")},
-            data={"model": "whisper-large-v3", "language": "hi", "response_format": "text"}
+            files={"file": (audio_file.filename or "audio.webm",
+                            audio_file.read(),
+                            audio_file.content_type or "audio/webm")},
+            data={"model": "whisper-large-v3-turbo",
+                  "language": "hi",
+                  "response_format": "text"}
         )
         if resp.status_code != 200:
             return jsonify({"error": resp.text}), 500
 
         raw_text = resp.text.strip()
 
-        # Parse the transcription into a number/time using Groq LLM
         parse_resp = req_lib.post(
             "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {groq_key}",
+                     "Content-Type": "application/json"},
             json={
                 "model": "llama-3.3-70b-versatile",
                 "temperature": 0,
                 "messages": [
-                    {"role": "system", "content": """You are a number/time parser for a vehicle log entry app.
-The user speaks in Hindi, English, or mixed (Hinglish). Your job is to extract ONLY the number or time they said.
+                    {"role": "system", "content": """You are a number and time parser for a vehicle daily log app used by Indian drivers.
+Input is spoken Hindi, English, Hinglish, or mixed. Your ONLY job is to return a clean number or time.
 
-RULES:
-- For KM numbers: return ONLY the integer. Examples:
+═══ NUMBER PARSING RULES ═══
+Indian number system — memorize these units:
+  ek=1, do=2, teen=3, char=4, paanch=5, chhe/chheh=6, saat=7, aath=8, nau=9, das=10
+  gyarah=11, barah=12, terah=13, chaudah=14, pandrah=15, solah=16, satrah=17, atharah=18, unnis=19
+  bees=20, tees=30, chaalees=40, pachaas=50, saath/saathi=60, sattar=70, assi=80, nabbe=90
+  sau=100, hazaar/hazar=1000, lakh/laakh=100000, crore=10000000
+
+CRITICAL — lakh/laakh are THE SAME WORD, both mean 100,000:
+  "nau lakh" = "nau laakh" = 9,00,000 = 900000
+  "ek lakh" = "ek laakh" = 1,00,000 = 100000
+  "do lakh pachaas hazaar" = 2,50,000 = 250000
+
+Examples:
   "char hajar nau sao nabbe" → 4990
-  "teen hajar paanch sau" → 3500
-  "4990" → 4990
-  "बारह हज़ार" → 12000
-  "do hajar tin sau sattavan" → 2357
+  "teen hazaar paanch sau" → 3500
+  "barah hazaar teen sau pachaas" → 12350
+  "nau lakh" → 900000
+  "nau laakh" → 900000
+  "paanch lakh bees hazaar" → 520000
+  "do lakh" → 200000
+  "ek lakh pachaas hazaar" → 150000
+  "bees hazaar" → 20000
+  "teen sau" → 300
+  "pachpan" → 55
+  "1 lakh" → 100000
+  "9 lakh" → 900000
+  "9 laakh" → 900000
+  "12345" → 12345
 
-- For times: return ONLY in HH:MM (24hr) format. Examples:
+═══ TIME PARSING RULES ═══
+Convert to 24-hour HH:MM format.
+Context words: subah/sawere=morning(AM), dopahar=afternoon(12-4PM), shaam=evening(4-8PM), raat=night(PM)
   "paanch bajke pandrah minute" → 05:15
   "shaam ke saat baje" → 19:00
   "raat ke das baje" → 22:00
   "subah chhe bajkar bis minute" → 06:20
-  "3 bajke 45 minute" → 03:45
-  "dopahar ke 2 baje" → 14:00
-  "raat ke 11 baje" → 23:00
+  "dopahar ke do baje" → 14:00
+  "raat ke gyarah baje" → 23:00
+  "teen bajke chaalees minute" → 03:40
+  "saat bajke paanch minute shaam" → 19:05
   "5:15 PM" → 17:15
   "6 AM" → 06:00
+  "10 baje raat" → 22:00
+  "saade aath" (half past 8) → 08:30
+  "paune nau" (quarter to 9) → 08:45
+  "sawa chhe" (quarter past 6) → 06:15
 
-- If the input is irrelevant noise, unclear, or not a number/time, return: INVALID
-
-Return ONLY the number or HH:MM or INVALID. No explanation, no extra words."""},
+═══ OUTPUT RULES ═══
+- Return ONLY the number (integer) OR time (HH:MM) OR the word: INVALID
+- No explanation, no units, no extra text
+- If unclear, noise, or not a number/time: INVALID"""},
                     {"role": "user", "content": raw_text}
                 ]
             }
@@ -286,7 +324,7 @@ Return ONLY the number or HH:MM or INVALID. No explanation, no extra words."""},
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ---------- Push notification subscription ----------
+# ---------- Push subscription ----------
 @app.route("/subscribe-push", methods=["POST"])
 def subscribe_push():
     if "car" not in session:
@@ -312,35 +350,35 @@ def admin():
             msg = "Invalid admin code"
         elif action == "notify":
             try:
-                target  = request.form.get("target", "all")  # "all" or car key
+                target  = request.form.get("target", "all")
                 message = request.form.get("message", "").strip()
                 if not message:
                     raise ValueError("Message cannot be empty")
 
-                subs = load_subs()
-                sent = 0
+                subs   = load_subs()
+                sent   = 0
                 failed = 0
+                dead   = []
 
-                targets = subs.keys() if target == "all" else ([target] if target in subs else [])
+                targets = list(subs.keys()) if target == "all" else ([target] if target in subs else [])
 
                 for car_key in targets:
-                    sub = subs[car_key]
                     try:
-                        webpush(
-                            subscription_info=sub,
-                            data=json.dumps({"title": "Brajwasi Travels 🚗", "body": message}),
-                            vapid_private_key=VAPID_PRIVATE_KEY,
-                            vapid_claims={"sub": VAPID_EMAIL}
-                        )
+                        send_push(subs[car_key], message)
                         sent += 1
                     except WebPushException as e:
                         failed += 1
-                        # Remove dead subscriptions
                         if "410" in str(e) or "404" in str(e):
-                            subs.pop(car_key, None)
-                            save_subs(subs)
+                            dead.append(car_key)
+                    except Exception as e:
+                        failed += 1
 
-                msg = f"✅ Notification sent to {sent} driver(s). {f'({failed} failed)' if failed else ''}"
+                for k in dead:
+                    subs.pop(k, None)
+                if dead:
+                    save_subs(subs)
+
+                msg = f"✅ Sent to {sent} driver(s)." + (f" {failed} failed." if failed else "")
                 cls = "success"
             except Exception as e:
                 msg = f"Error: {e}"
@@ -365,8 +403,7 @@ def admin():
                     file_id = info["file_id"]
 
                     sheets.spreadsheets().values().update(
-                        spreadsheetId=file_id,
-                        range=f"{sheet}!A3",
+                        spreadsheetId=file_id, range=f"{sheet}!A3",
                         valueInputOption="USER_ENTERED",
                         body={"values": [[title_text]]}
                     ).execute()
@@ -394,21 +431,19 @@ def admin():
                     ).execute()
 
                 msg = (f"✅ All sheets updated for {month_name} {year} "
-                       f"({days_in_month} days). Ready for new entries.")
+                       f"({days_in_month} days).")
                 cls = "success"
-
             except Exception as e:
                 msg = f"Error: {e}"
 
-    now      = datetime.now()
-    subs     = load_subs()
-    drivers  = list(DRIVERS.keys())
+    now     = datetime.now()
+    subs    = load_subs()
+    drivers = list(DRIVERS.keys())
 
     return render_template("admin.html", msg=msg, cls=cls,
                            cur_month=now.month, cur_year=now.year,
                            drivers=drivers, subs=subs)
 
-# ---------- Logout ----------
 @app.route("/logout")
 def logout():
     session.clear()
