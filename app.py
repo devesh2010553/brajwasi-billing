@@ -35,24 +35,43 @@ VAPID_EMAIL       = os.getenv("VAPID_EMAIL", "mailto:admin@brajwasitravels.com")
 # ---------- MongoDB ----------
 MONGO_URI = os.getenv("MONGO_URI", "")
 
+_mongo_col = None  # persistent collection reference
+
 def get_db():
-    """Get MongoDB subscriptions collection. Falls back to file if no MONGO_URI."""
+    global _mongo_col
+    if _mongo_col is not None:
+        return _mongo_col
     if not MONGO_URI:
         return None
     try:
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
-        return client["brajwasi"]["subscriptions"]
-    except ConnectionFailure:
+        client = MongoClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+            socketTimeoutMS=5000
+        )
+        # Verify connection works
+        client.admin.command("ping")
+        _mongo_col = client["brajwasi"]["subscriptions"]
+        print("✅ MongoDB connected successfully")
+        return _mongo_col
+    except Exception as e:
+        print(f"❌ MongoDB connection failed: {e}")
         return None
 
 # ---------- Subscription helpers (MongoDB with file fallback) ----------
 SUBS_FILE = "subscriptions.json"
 
 def load_subs():
-    col = get_db()
-    if col is not None:
-        # Each doc: {_id: car_key, sub: {...push subscription...}}
-        return {doc["_id"]: doc["sub"] for doc in col.find()}
+    try:
+        col = get_db()
+        if col is not None:
+            docs = list(col.find())
+            result = {doc["_id"]: doc["sub"] for doc in docs}
+            print(f"📦 Loaded {len(result)} subs from MongoDB")
+            return result
+    except Exception as e:
+        print(f"⚠️ MongoDB load_subs error: {e}")
     # Fallback: file
     if os.path.exists(SUBS_FILE):
         with open(SUBS_FILE) as f:
@@ -60,27 +79,34 @@ def load_subs():
     return {}
 
 def save_sub(car_key, sub):
-    """Upsert a single subscription."""
-    col = get_db()
-    if col is not None:
-        col.update_one(
-            {"_id": car_key},
-            {"$set": {"sub": sub, "updated_at": datetime.utcnow()}},
-            upsert=True
-        )
-        return
+    try:
+        col = get_db()
+        if col is not None:
+            col.update_one(
+                {"_id": car_key},
+                {"$set": {"sub": sub, "updated_at": datetime.utcnow()}},
+                upsert=True
+            )
+            print(f"✅ Saved sub for {car_key} to MongoDB")
+            return
+    except Exception as e:
+        print(f"⚠️ MongoDB save_sub error: {e}")
     # Fallback: file
     subs = load_subs()
     subs[car_key] = sub
     with open(SUBS_FILE, "w") as f:
         json.dump(subs, f, indent=2)
+    print(f"✅ Saved sub for {car_key} to file")
 
 def delete_sub(car_key):
-    """Remove a dead subscription."""
-    col = get_db()
-    if col is not None:
-        col.delete_one({"_id": car_key})
-        return
+    try:
+        col = get_db()
+        if col is not None:
+            col.delete_one({"_id": car_key})
+            print(f"🗑️ Deleted sub for {car_key} from MongoDB")
+            return
+    except Exception as e:
+        print(f"⚠️ MongoDB delete_sub error: {e}")
     # Fallback: file
     subs = load_subs()
     subs.pop(car_key, None)
@@ -504,6 +530,18 @@ def admin():
     return render_template("admin.html", msg=msg, cls=cls,
                            cur_month=now.month, cur_year=now.year,
                            drivers=drivers, subs=subs)
+
+@app.route("/mongo-test")
+def mongo_test():
+    col = get_db()
+    if col is None:
+        return jsonify({"status": "❌ MongoDB not connected", "uri_set": bool(MONGO_URI)})
+    try:
+        count = col.count_documents({})
+        docs  = [{"car": d["_id"], "updated_at": str(d.get("updated_at", ""))} for d in col.find()]
+        return jsonify({"status": "✅ MongoDB connected", "subscriptions": count, "drivers": docs})
+    except Exception as e:
+        return jsonify({"status": f"❌ Error: {e}"})
 
 @app.route("/logout")
 def logout():
