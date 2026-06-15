@@ -5,6 +5,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from pywebpush import webpush, WebPushException
 from py_vapid import Vapid
+from pymongo import MongoClient, UpdateOne
+from pymongo.errors import ConnectionFailure
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
@@ -30,15 +32,58 @@ VAPID_PUBLIC_KEY  = os.getenv("VAPID_PUBLIC_KEY",  "BI495kOQBEdy0aSHpJfT1bpzOmlr
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "Hg1eASB4wKsblPHdoZyvEVihWjYQxbNNaBPUkS7Rxzs")
 VAPID_EMAIL       = os.getenv("VAPID_EMAIL", "mailto:admin@brajwasitravels.com")
 
+# ---------- MongoDB ----------
+MONGO_URI = os.getenv("MONGO_URI", "")
+
+def get_db():
+    """Get MongoDB subscriptions collection. Falls back to file if no MONGO_URI."""
+    if not MONGO_URI:
+        return None
+    try:
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
+        return client["brajwasi"]["subscriptions"]
+    except ConnectionFailure:
+        return None
+
+# ---------- Subscription helpers (MongoDB with file fallback) ----------
 SUBS_FILE = "subscriptions.json"
 
 def load_subs():
+    col = get_db()
+    if col is not None:
+        # Each doc: {_id: car_key, sub: {...push subscription...}}
+        return {doc["_id"]: doc["sub"] for doc in col.find()}
+    # Fallback: file
     if os.path.exists(SUBS_FILE):
         with open(SUBS_FILE) as f:
             return json.load(f)
     return {}
 
-def save_subs(subs):
+def save_sub(car_key, sub):
+    """Upsert a single subscription."""
+    col = get_db()
+    if col is not None:
+        col.update_one(
+            {"_id": car_key},
+            {"$set": {"sub": sub, "updated_at": datetime.utcnow()}},
+            upsert=True
+        )
+        return
+    # Fallback: file
+    subs = load_subs()
+    subs[car_key] = sub
+    with open(SUBS_FILE, "w") as f:
+        json.dump(subs, f, indent=2)
+
+def delete_sub(car_key):
+    """Remove a dead subscription."""
+    col = get_db()
+    if col is not None:
+        col.delete_one({"_id": car_key})
+        return
+    # Fallback: file
+    subs = load_subs()
+    subs.pop(car_key, None)
     with open(SUBS_FILE, "w") as f:
         json.dump(subs, f, indent=2)
 
@@ -255,40 +300,58 @@ def transcribe():
                 "temperature": 0,
                 "messages": [
                     {"role": "system", "content": """You are a number and time parser for a vehicle daily log app used by Indian drivers.
-Input is spoken Hindi, English, Hinglish, or mixed. Your ONLY job is to return a clean number or time.
+Input is spoken Hindi, English, Hinglish, or mixed language. Extract ONLY the number or time being said.
 
-═══ NUMBER PARSING RULES ═══
-Indian number system — memorize these units:
-  ek=1, do=2, teen=3, char=4, paanch=5, chhe/chheh=6, saat=7, aath=8, nau=9, das=10
-  gyarah=11, barah=12, terah=13, chaudah=14, pandrah=15, solah=16, satrah=17, atharah=18, unnis=19
-  bees=20, tees=30, chaalees=40, pachaas=50, saath/saathi=60, sattar=70, assi=80, nabbe=90
-  sau=100, hazaar/hazar=1000, lakh/laakh=100000, crore=10000000
+═══ HINDI NUMBER UNITS — memorize all ═══
+ek=1, do=2, teen=3, char=4, paanch=5, chhe/chheh/chhah=6, saat=7, aath=8, nau=9, das=10
+gyarah=11, barah=12, terah=13, chaudah=14, pandrah=15, solah=16, satrah=17, atharah=18, unnis=19
+bees=20, ikkees=21, baees=22, teis=23, chaubees=24, pachchees=25, chhabbees=26, sattaees=27, athaees=28, untees=29
+tees=30, ikattees=31, battees=32, taintees=33, chautees=34, paintees=35, chhattees=36, saintees=37, artees=38, untaalees=39
+chaalees=40, iktaalees=41, bayaalees=42, taintaalees=43, chavaalees=44, paintaalees=45, chhiyaalees=46, saintaalees=47, artaalees=48, unchaas=49
+pachaas=50, ikyavan=51, baavan=52, tirpan=53, chauvan=54, pachpan=55, chhappan=56, sattavan=57, atthavan=58, unsath=59
+saath/saathi=60, iksath=61, basath=62, tirsath=63, chausath=64, painsath=65, chhiyasath=66, sarsath=67, arsath=68, unhattar=69
+sattar=70, ikhattar=71, bahattar=72, tihattar=73, chauhattar=74, pachhattar=75, chhihattar=76, sathattar=77, athahattar=78, unnaasee=79
+assi=80, ikyaasee=81, bayaasee=82, tiraasee=83, chauraasee=84, pachaasee=85, chhiyaasee=86, sataasee=87, athaasee=88, navaasee=89
+nabbe=90, ikyaanave=91, baanave=92, tiraanave=93, chauraanave=94, panchaanave=95, chhiyaanave=96, sataanave=97, athaanave=98, ninaanave=99
+sau=100, hazaar/hazar=1000, lakh/laakh=100000, crore=10000000
 
-CRITICAL — lakh/laakh are THE SAME WORD, both mean 100,000:
+CRITICAL — lakh and laakh are IDENTICAL, both = 100,000:
   "nau lakh" = "nau laakh" = 9,00,000 = 900000
   "ek lakh" = "ek laakh" = 1,00,000 = 100000
-  "do lakh pachaas hazaar" = 2,50,000 = 250000
+  "paanch lakh" = "paanch laakh" = 5,00,000 = 500000
+  "saat laakh" = "saat lakh" = 7,00,000 = 700000
 
-Examples:
-  "char hajar nau sao nabbe" → 4990
+Number examples:
+  "char hajar nau sau nabbe" → 4990
+  "char hajar nau soo nabbe" → 4990
   "teen hazaar paanch sau" → 3500
   "barah hazaar teen sau pachaas" → 12350
   "nau lakh" → 900000
   "nau laakh" → 900000
   "paanch lakh bees hazaar" → 520000
-  "do lakh" → 200000
+  "do laakh pachaas hazaar" → 250000
   "ek lakh pachaas hazaar" → 150000
+  "saat lakh" → 700000
   "bees hazaar" → 20000
   "teen sau" → 300
   "pachpan" → 55
+  "baees hazaar char sau sattavan" → 22457
   "1 lakh" → 100000
   "9 lakh" → 900000
   "9 laakh" → 900000
   "12345" → 12345
+  "ek crore" → 10000000
 
 ═══ TIME PARSING RULES ═══
-Convert to 24-hour HH:MM format.
-Context words: subah/sawere=morning(AM), dopahar=afternoon(12-4PM), shaam=evening(4-8PM), raat=night(PM)
+Return 24-hour HH:MM format.
+Time words: subah/sawere=morning AM, dopahar=afternoon 12-4PM, shaam=evening 4-8PM, raat=night PM
+Special forms:
+  saade X = X hours 30 min (saade aath = 8:30, saade nau = 9:30)
+  paune X = X hours minus 15 min (paune nau = 8:45, paune das = 9:45)
+  sawa X = X hours 15 min (sawa chhe = 6:15, sawa saat = 7:15)
+  dhaai = 2:30
+
+Time examples:
   "paanch bajke pandrah minute" → 05:15
   "shaam ke saat baje" → 19:00
   "raat ke das baje" → 22:00
@@ -297,17 +360,19 @@ Context words: subah/sawere=morning(AM), dopahar=afternoon(12-4PM), shaam=evenin
   "raat ke gyarah baje" → 23:00
   "teen bajke chaalees minute" → 03:40
   "saat bajke paanch minute shaam" → 19:05
+  "saade aath subah" → 08:30
+  "paune nau raat" → 20:45
+  "sawa chhe subah" → 06:15
+  "10 baje raat" → 22:00
   "5:15 PM" → 17:15
   "6 AM" → 06:00
-  "10 baje raat" → 22:00
-  "saade aath" (half past 8) → 08:30
-  "paune nau" (quarter to 9) → 08:45
-  "sawa chhe" (quarter past 6) → 06:15
+  "7 baje" → 07:00
 
 ═══ OUTPUT RULES ═══
-- Return ONLY the number (integer) OR time (HH:MM) OR the word: INVALID
-- No explanation, no units, no extra text
-- If unclear, noise, or not a number/time: INVALID"""},
+- Return ONLY: an integer number OR HH:MM time OR the word INVALID
+- No explanation, no units (km, घंटे), no extra words whatsoever
+- Ignore filler words: um, uh, matlab, yaani, woh, toh
+- If input is noise, irrelevant, or unparseable: INVALID"""},
                     {"role": "user", "content": raw_text}
                 ]
             }
@@ -329,11 +394,9 @@ Context words: subah/sawere=morning(AM), dopahar=afternoon(12-4PM), shaam=evenin
 def subscribe_push():
     if "car" not in session:
         return jsonify({"error": "Not logged in"}), 401
-    car  = session["car"]
-    sub  = request.json
-    subs = load_subs()
-    subs[car] = sub
-    save_subs(subs)
+    car = session["car"]
+    sub = request.json
+    save_sub(car, sub)
     return jsonify({"ok": True})
 
 # ---------- Admin ----------
@@ -374,9 +437,7 @@ def admin():
                         failed += 1
 
                 for k in dead:
-                    subs.pop(k, None)
-                if dead:
-                    save_subs(subs)
+                    delete_sub(k)
 
                 msg = f"✅ Sent to {sent} driver(s)." + (f" {failed} failed." if failed else "")
                 cls = "success"
