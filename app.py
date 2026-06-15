@@ -1,12 +1,10 @@
 from flask import Flask, render_template, request, redirect, session, send_from_directory, jsonify
-import json, os, math, calendar, base64
+import json, os, math, calendar
 from datetime import datetime, timedelta, time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from pywebpush import webpush, WebPushException
-from py_vapid import Vapid
-from pymongo import MongoClient, UpdateOne
-from pymongo.errors import ConnectionFailure
+from pymongo import MongoClient
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
@@ -33,92 +31,89 @@ VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "Hg1eASB4wKsblPHdoZyvEVihWjYQ
 VAPID_EMAIL       = os.getenv("VAPID_EMAIL", "mailto:admin@brajwasitravels.com")
 
 # ---------- MongoDB ----------
-MONGO_URI = os.getenv("MONGO_URI", "")
+MONGO_URI  = os.getenv("MONGO_URI", "")
+_mongo_client = None
+_mongo_col    = None
 
-_mongo_col = None  # persistent collection reference
-
-def get_db():
-    global _mongo_col
+def get_col():
+    """Return MongoDB collection, creating connection once. Returns None if unavailable."""
+    global _mongo_client, _mongo_col
     if _mongo_col is not None:
         return _mongo_col
     if not MONGO_URI:
+        print("⚠️  MONGO_URI not set — using file fallback")
         return None
     try:
-        client = MongoClient(
-            MONGO_URI,
-            serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=5000,
-            socketTimeoutMS=5000
-        )
-        # Verify connection works
-        client.admin.command("ping")
-        _mongo_col = client["brajwasi"]["subscriptions"]
-        print("✅ MongoDB connected successfully")
+        _mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        _mongo_client.admin.command("ping")   # verify connection
+        _mongo_col = _mongo_client["brajwasi"]["subscriptions"]
+        print("✅ MongoDB connected")
         return _mongo_col
     except Exception as e:
-        print(f"❌ MongoDB connection failed: {e}")
+        print(f"❌ MongoDB failed: {e}")
         return None
 
-# ---------- Subscription helpers (MongoDB with file fallback) ----------
+# ---------- Subscription CRUD ----------
 SUBS_FILE = "subscriptions.json"
 
-def load_subs():
-    try:
-        col = get_db()
-        if col is not None:
-            docs = list(col.find())
-            result = {doc["_id"]: doc["sub"] for doc in docs}
-            print(f"📦 Loaded {len(result)} subs from MongoDB")
-            return result
-    except Exception as e:
-        print(f"⚠️ MongoDB load_subs error: {e}")
-    # Fallback: file
+def _file_load():
     if os.path.exists(SUBS_FILE):
         with open(SUBS_FILE) as f:
             return json.load(f)
     return {}
 
-def save_sub(car_key, sub):
-    try:
-        col = get_db()
-        if col is not None:
+def _file_save(subs):
+    with open(SUBS_FILE, "w") as f:
+        json.dump(subs, f, indent=2)
+
+def load_subs():
+    col = get_col()
+    if col is not None:
+        try:
+            return {d["_id"]: d["sub"] for d in col.find()}
+        except Exception as e:
+            print(f"❌ load_subs MongoDB error: {e}")
+    return _file_load()
+
+def save_sub(car_key, sub_info):
+    col = get_col()
+    if col is not None:
+        try:
             col.update_one(
                 {"_id": car_key},
-                {"$set": {"sub": sub, "updated_at": datetime.utcnow()}},
+                {"$set": {"sub": sub_info, "updated_at": datetime.utcnow()}},
                 upsert=True
             )
-            print(f"✅ Saved sub for {car_key} to MongoDB")
+            print(f"✅ MongoDB: saved sub for {car_key}")
             return
-    except Exception as e:
-        print(f"⚠️ MongoDB save_sub error: {e}")
-    # Fallback: file
-    subs = load_subs()
-    subs[car_key] = sub
-    with open(SUBS_FILE, "w") as f:
-        json.dump(subs, f, indent=2)
-    print(f"✅ Saved sub for {car_key} to file")
+        except Exception as e:
+            print(f"❌ save_sub MongoDB error: {e}")
+    # file fallback
+    subs = _file_load()
+    subs[car_key] = sub_info
+    _file_save(subs)
+    print(f"✅ File: saved sub for {car_key}")
 
 def delete_sub(car_key):
-    try:
-        col = get_db()
-        if col is not None:
+    col = get_col()
+    if col is not None:
+        try:
             col.delete_one({"_id": car_key})
-            print(f"🗑️ Deleted sub for {car_key} from MongoDB")
+            print(f"🗑️  MongoDB: deleted sub for {car_key}")
             return
-    except Exception as e:
-        print(f"⚠️ MongoDB delete_sub error: {e}")
-    # Fallback: file
-    subs = load_subs()
+        except Exception as e:
+            print(f"❌ delete_sub MongoDB error: {e}")
+    subs = _file_load()
     subs.pop(car_key, None)
-    with open(SUBS_FILE, "w") as f:
-        json.dump(subs, f, indent=2)
+    _file_save(subs)
 
-def send_push(sub, message, title="Brajwasi Travels 🚗"):
-    vapid = Vapid.from_string(private_key=VAPID_PRIVATE_KEY)
+# ---------- Push ----------
+def send_push(sub_info, message, title="Brajwasi Travels 🚗"):
+    """Send a web push notification. sub_info is the full subscription dict."""
     webpush(
-        subscription_info=sub,
+        subscription_info=sub_info,
         data=json.dumps({"title": title, "body": message}),
-        vapid_private_key=vapid.private_key,
+        vapid_private_key=VAPID_PRIVATE_KEY,   # pass raw base64 string directly
         vapid_claims={"sub": VAPID_EMAIL}
     )
 
@@ -455,18 +450,26 @@ def admin():
                     try:
                         send_push(subs[car_key], message)
                         sent += 1
+                        print(f"✅ Push sent to {car_key}")
                     except WebPushException as e:
                         failed += 1
-                        if "410" in str(e) or "404" in str(e):
+                        err_str = str(e)
+                        print(f"❌ WebPushException for {car_key}: {err_str}")
+                        if "410" in err_str or "404" in err_str:
                             dead.append(car_key)
                     except Exception as e:
                         failed += 1
+                        print(f"❌ Push error for {car_key}: {e}")
 
                 for k in dead:
                     delete_sub(k)
 
-                msg = f"✅ Sent to {sent} driver(s)." + (f" {failed} failed." if failed else "")
-                cls = "success"
+                if sent == 0 and failed == 0:
+                    msg = "⚠️ No subscribed drivers found. Drivers must allow notifications first."
+                    cls = "error"
+                else:
+                    msg = f"✅ Sent to {sent} driver(s)." + (f" {failed} failed — check Render logs." if failed else "")
+                    cls = "success"
             except Exception as e:
                 msg = f"Error: {e}"
 
