@@ -1,4 +1,4 @@
-const CACHE_NAME = "brajwasi-v5";
+const CACHE_NAME = "brajwasi-v6";
 
 const ASSETS = [
   "/",
@@ -11,7 +11,9 @@ const ASSETS = [
 self.addEventListener("install", event => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
+    caches.open(CACHE_NAME).then(cache =>
+      cache.addAll(ASSETS).catch(err => console.log("Cache addAll failed", err))
+    )
   );
 });
 
@@ -26,59 +28,53 @@ self.addEventListener("activate", event => {
 
 self.addEventListener("fetch", event => {
   const url = event.request.url;
-
-  // ── Skip non-http requests (chrome-extension://, data:, etc.) ──
   if (!url.startsWith("http://") && !url.startsWith("https://")) return;
-
-  // ── Skip POST/non-GET requests ──
   if (event.request.method !== "GET") return;
 
   event.respondWith(
     fetch(event.request)
       .then(response => {
-        // Only cache valid same-origin responses
-        if (
-          response &&
-          response.status === 200 &&
-          response.type !== "opaque" &&
-          url.startsWith(self.location.origin)
-        ) {
+        if (response && response.status === 200 && response.type !== "opaque" && url.startsWith(self.location.origin)) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(event.request).then(cached => cached || caches.match("/")))
   );
 });
 
-// ── Push Notification Handler ─────────────────────────────────────────────
 self.addEventListener("push", event => {
-  let data = { title: "Brajwasi Travels 🚗", body: "New message from admin" };
-  try { data = event.data.json(); }
-  catch(e) { data.body = event.data ? event.data.text() : "New alert"; }
+  let data = { title: "Brajwasi Travels 🚗", body: "New message from admin", url: "/entry" };
+  try {
+    if (event.data) data = { ...data, ...event.data.json() };
+  } catch(e) {
+    data.body = event.data ? event.data.text() : "New alert";
+  }
 
   event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body:     data.body,
-      icon:     "/static/icons/icon-192.png",
-      badge:    "/static/icons/icon-192.png",
-      vibrate:  [200, 100, 200],
-      tag:      "brajwasi-alert",
+    self.registration.showNotification(data.title || "Brajwasi Travels 🚗", {
+      body: data.body || "New message from admin",
+      icon: "/static/icons/icon-192.png",
+      badge: "/static/icons/icon-192.png",
+      vibrate: [200, 100, 200],
+      tag: "brajwasi-alert-" + Date.now(),
       renotify: true,
-      data:     { url: "/entry" }
+      requireInteraction: true,
+      data: { url: data.url || "/entry" }
     })
   );
 });
 
 self.addEventListener("notificationclick", event => {
   event.notification.close();
+  const targetUrl = event.notification.data && event.notification.data.url ? event.notification.data.url : "/entry";
   event.waitUntil(
-    clients.matchAll({ type: "window" }).then(list => {
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
       for (const client of list) {
-        if (client.url.includes("/entry") && "focus" in client) return client.focus();
+        if (client.url.includes(targetUrl) && "focus" in client) return client.focus();
       }
-      if (clients.openWindow) return clients.openWindow("/entry");
+      if (clients.openWindow) return clients.openWindow(targetUrl);
     })
   );
 });

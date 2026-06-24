@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, send_from_directory, jsonify
-import json, os, math, calendar
+import json, os, math, calendar, re
 from datetime import datetime, timedelta, time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -26,9 +26,11 @@ creds = service_account.Credentials.from_service_account_info(
 sheets = build("sheets", "v4", credentials=creds)
 
 # ---------- VAPID ----------
-VAPID_PUBLIC_KEY  = os.getenv("VAPID_PUBLIC_KEY",  "BI495kOQBEdy0aSHpJfT1bpzOmlryP__uLVreDYYrA2zsqEirtPSDrX7CGTvol6oygSPvTcBQ_RLwXDMPqcFDQo")
-VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "Hg1eASB4wKsblPHdoZyvEVihWjYQxbNNaBPUkS7Rxzs")
+VAPID_PUBLIC_KEY  = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 VAPID_EMAIL       = os.getenv("VAPID_EMAIL", "mailto:admin@brajwasitravels.com")
+if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+    print("⚠️ VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY missing. Push will not work until env vars are set.")
 
 # ---------- MongoDB ----------
 MONGO_URI  = os.getenv("MONGO_URI", "")
@@ -282,6 +284,123 @@ def get_last_closing():
     except Exception as e:
         return jsonify({"closing": None, "error": str(e)})
 
+
+# ---------- Hindi/Hinglish number + time parser ----------
+DIGIT_WORDS = {
+    "zero":"0", "jiro":"0", "shunya":"0", "sunna":"0", "0":"0", "०":"0",
+    "ek":"1", "aik":"1", "एक":"1", "one":"1", "1":"1", "१":"1",
+    "do":"2", "du":"2", "doo":"2", "दू":"2", "दो":"2", "two":"2", "to":"2", "2":"2", "२":"2",
+    "teen":"3", "tin":"3", "तीन":"3", "three":"3", "3":"3", "३":"3",
+    "char":"4", "chaar":"4", "चार":"4", "four":"4", "4":"4", "४":"4",
+    "panch":"5", "paanch":"5", "panchh":"5", "पांच":"5", "पाँच":"5", "five":"5", "5":"5", "५":"5",
+    "chhe":"6", "che":"6", "chhah":"6", "छे":"6", "छह":"6", "six":"6", "6":"6", "६":"6",
+    "saat":"7", "sat":"7", "सात":"7", "seven":"7", "7":"7", "७":"7",
+    "aath":"8", "ath":"8", "आठ":"8", "eight":"8", "8":"8", "८":"8",
+    "nau":"9", "nav":"9", "no":"9", "nine":"9", "नौ":"9", "9":"9", "९":"9",
+}
+
+NUM_WORDS = {
+    **{k:int(v) for k,v in DIGIT_WORDS.items() if v.isdigit()},
+    "das":10,"dus":10,"ten":10,"gyarah":11,"gyaarah":11,"barah":12,"baarah":12,"terah":13,"chaudah":14,
+    "pandrah":15,"pandra":15,"solah":16,"satrah":17,"atharah":18,"unnis":19,"bees":20,"bis":20,
+    "ikkees":21,"ikkis":21,"baees":22,"bais":22,"teis":23,"chaubees":24,"pachchees":25,"pachis":25,
+    "chhabbees":26,"sattaees":27,"athais":28,"athaees":28,"untees":29,"tis":30,"tees":30,
+    "ikattees":31,"battees":32,"taintees":33,"chautees":34,"paintees":35,"chhattees":36,"saintees":37,
+    "artees":38,"untaalees":39,"chalees":40,"chaalees":40,"bayalees":42,"pachas":50,"pachaas":50,
+    "sath":60,"saath":60,"sattar":70,"seventy":70,"assi":80,"eighty":80,"nabbe":90,"ninety":90,
+    "ninyanve":99,"ninyanaye":99,"ninyanave":99,"ninyaanve":99,"ninaanve":99,"ninety nine":99,
+}
+SCALE_WORDS = {"sau":100,"soo":100,"so":100,"hundred":100,"hazar":1000,"hazaar":1000,"hajar":1000,"thousand":1000,"lakh":100000,"laakh":100000,"lac":100000,"crore":10000000}
+FILLERS = {"km","kilometer","kilometre","kilo","reading","hai","he","hain","tha","the","aur","or","and","matlab","yaani","yani","woh","wo","toh","to","ji","please","fast","jaldi","करीब","लगभग"}
+
+def _tokens(text):
+    text = text.lower().replace(",", " ").replace("-", " ")
+    return re.findall(r"[a-zA-Zअ-ह०-९0-9:]+", text)
+
+def local_digit_chain(text):
+    toks = [t for t in _tokens(text) if t not in FILLERS]
+    digits = []
+    for w in toks:
+        if re.fullmatch(r"[0-9०-९]+", w):
+            trans = str.maketrans("०१२३४५६७८९", "0123456789")
+            digits.append(w.translate(trans))
+        elif w in DIGIT_WORDS:
+            digits.append(DIGIT_WORDS[w])
+        else:
+            return None
+    if len(digits) >= 3:
+        return "".join(digits)
+    return None
+
+def local_number_value(text):
+    toks = [t for t in _tokens(text) if t not in FILLERS]
+    if not toks:
+        return None
+    total = 0
+    current = 0
+    used = False
+    i = 0
+    while i < len(toks):
+        w = toks[i]
+        if re.fullmatch(r"[0-9०-९]+", w):
+            trans = str.maketrans("०१२३४५६७८९", "0123456789")
+            current += int(w.translate(trans)); used = True
+        elif w in NUM_WORDS:
+            current += NUM_WORDS[w]; used = True
+        elif w in SCALE_WORDS:
+            scale = SCALE_WORDS[w]
+            if current == 0: current = 1
+            if scale >= 1000:
+                total += current * scale
+                current = 0
+            else:
+                current *= scale
+            used = True
+        else:
+            # allow combined forms like 9so / 9soo
+            m = re.fullmatch(r"([0-9]+)(so|soo|sau)", w)
+            if m:
+                current += int(m.group(1)) * 100; used = True
+            else:
+                return None
+        i += 1
+    if used:
+        return str(total + current)
+    return None
+
+def local_time_value(text):
+    t = text.lower()
+    toks = _tokens(t)
+    has_time_word = any(w in t for w in ["baje","bajke","bajkar","am","pm","subah","shaam","raat","dopahar","sawere","time"])
+    m = re.search(r"\b(\d{1,2})[:.](\d{1,2})\s*(am|pm)?\b", t)
+    if m:
+        hh, mm = int(m.group(1)), int(m.group(2)); ap = m.group(3)
+        if ap == "pm" and hh < 12: hh += 12
+        if ap == "am" and hh == 12: hh = 0
+        return f"{hh:02d}:{mm:02d}"
+    if not has_time_word:
+        return None
+    nums = []
+    for w in toks:
+        if w in NUM_WORDS: nums.append(NUM_WORDS[w])
+        elif re.fullmatch(r"\d+", w): nums.append(int(w))
+    hh = nums[0] if nums else None
+    mm = nums[1] if len(nums) > 1 else 0
+    if "saade" in toks or "sadhe" in toks: mm = 30
+    if "sawa" in toks: mm = 15
+    if "paune" in toks and hh: hh -= 1; mm = 45
+    if "dhaai" in toks or "dhai" in toks: hh, mm = 2, 30
+    if hh is None: return None
+    if any(x in t for x in ["shaam","raat","pm"]) and hh < 12: hh += 12
+    if any(x in t for x in ["subah","sawere","am"]) and hh == 12: hh = 0
+    if "dopahar" in t and 1 <= hh <= 4: hh += 12
+    if 0 <= hh <= 23 and 0 <= mm <= 59:
+        return f"{hh:02d}:{mm:02d}"
+    return None
+
+def local_parse_spoken(text):
+    return local_time_value(text) or local_digit_chain(text) or local_number_value(text)
+
 # ---------- Groq voice transcription ----------
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
@@ -311,6 +430,11 @@ def transcribe():
             return jsonify({"error": resp.text}), 500
 
         raw_text = resp.text.strip()
+
+        # First use deterministic local parser. This fixes digit-by-digit speech like "आठ नौ एक दू" => 8912.
+        local_parsed = local_parse_spoken(raw_text)
+        if local_parsed:
+            return jsonify({"raw": raw_text, "parsed": local_parsed})
 
         parse_resp = req_lib.post(
             "https://api.groq.com/openai/v1/chat/completions",
@@ -536,7 +660,7 @@ def admin():
 
 @app.route("/mongo-test")
 def mongo_test():
-    col = get_db()
+    col = get_col()
     if col is None:
         return jsonify({"status": "❌ MongoDB not connected", "uri_set": bool(MONGO_URI)})
     try:

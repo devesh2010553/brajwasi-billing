@@ -266,7 +266,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 <script>
 const VAPID_PUBLIC_KEY = "{{ vapid_public_key }}";
 
-// ── Notification button ──────────────────────────────────────────────────────
+// ── Notification button + stable push subscribe ───────────────────────────────
 const notifBtn     = document.getElementById('notifBtn');
 const notifTooltip = document.getElementById('notifTooltip');
 
@@ -277,7 +277,11 @@ function urlB64ToUint8Array(b64) {
 }
 
 function updateNotifUI() {
-  if (!('Notification' in window)) { notifBtn.style.display='none'; return; }
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    notifBtn.style.display='none';
+    return;
+  }
+  notifBtn.classList.remove('granted','denied');
   if (Notification.permission === 'granted') {
     notifBtn.classList.add('granted');
     notifBtn.textContent = '🔔';
@@ -287,34 +291,69 @@ function updateNotifUI() {
     notifBtn.textContent = '🔕';
     notifTooltip.textContent = 'Blocked in browser settings';
   } else {
+    notifBtn.textContent = '🔔';
     notifTooltip.textContent = 'Tap to enable notifications';
   }
 }
-updateNotifUI();
 
-notifBtn.addEventListener('click', async () => {
-  if (Notification.permission === 'granted') {
-    notifTooltip.classList.add('show');
-    setTimeout(() => notifTooltip.classList.remove('show'), 2000);
-    return;
-  }
-  try {
-    const reg  = await navigator.serviceWorker.ready;
-    const perm = await Notification.requestPermission();
-    if (perm !== 'granted') { updateNotifUI(); return; }
-    const sub  = await reg.pushManager.subscribe({
+async function savePushSubscription() {
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlB64ToUint8Array(VAPID_PUBLIC_KEY)
     });
-    await fetch('/subscribe-push', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(sub.toJSON())
-    });
+  }
+  await fetch('/subscribe-push', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(sub.toJSON())
+  });
+}
+
+async function enablePush() {
+  try {
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      alert('This browser does not support push notifications.');
+      return;
+    }
+    let perm = Notification.permission;
+    if (perm !== 'granted') perm = await Notification.requestPermission();
+    if (perm !== 'granted') { updateNotifUI(); return; }
+    await savePushSubscription();
+    localStorage.setItem('notifAskedOnce', 'yes');
     updateNotifUI();
-    notifTooltip.textContent = 'Notifications enabled! ✓';
+    notifTooltip.textContent = 'Notifications enabled ✓';
     notifTooltip.classList.add('show');
     setTimeout(() => notifTooltip.classList.remove('show'), 2500);
-  } catch(e) { console.log('Push error:', e); updateNotifUI(); }
+  } catch(e) {
+    console.log('Push error:', e);
+    notifTooltip.textContent = 'Push setup failed';
+    notifTooltip.classList.add('show');
+    setTimeout(() => notifTooltip.classList.remove('show'), 3000);
+    updateNotifUI();
+  }
+}
+
+notifBtn.addEventListener('click', enablePush);
+updateNotifUI();
+
+window.addEventListener('load', async () => {
+  setTimeout(async () => {
+    updateNotifUI();
+    // Browsers do not allow true automatic permission popup. This one-time tooltip asks driver to tap the bell.
+    if (Notification.permission === 'default' && localStorage.getItem('notifAskedOnce') !== 'yes') {
+      notifTooltip.textContent = 'Tap 🔔 to allow notifications';
+      notifTooltip.classList.add('show');
+      localStorage.setItem('notifAskedOnce', 'yes');
+      setTimeout(() => notifTooltip.classList.remove('show'), 6000);
+    }
+    // If permission already granted, silently re-save subscription for this driver/car.
+    if (Notification.permission === 'granted') {
+      try { await savePushSubscription(); } catch(e) { console.log(e); }
+    }
+  }, 1200);
 });
 
 // ── Service Worker ───────────────────────────────────────────────────────────
