@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, session, send_from_directory, jsonify
+from flask import Flask, render_template, request, redirect, session, send_from_directory, jsonify, make_response
 import json, os, math, calendar, re
 from datetime import datetime, timedelta, time
 from google.oauth2 import service_account
@@ -7,7 +7,12 @@ from pywebpush import webpush, WebPushException
 from pymongo import MongoClient
 
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+app.secret_key = os.getenv("SECRET_KEY", "supersecretkey")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("FLASK_ENV") == "production",
+)
 ADMIN_CODE = os.getenv("ADMIN_CODE", "admin1234")
 
 app.permanent_session_lifetime = timedelta(days=3650)
@@ -111,13 +116,54 @@ def delete_sub(car_key):
 
 # ---------- Push ----------
 def send_push(sub_info, message, title="Brajwasi Travels 🚗"):
-    """Send a web push notification. sub_info is the full subscription dict."""
-    webpush(
-        subscription_info=sub_info,
-        data=json.dumps({"title": title, "body": message}),
-        vapid_private_key=VAPID_PRIVATE_KEY,   # pass raw base64 string directly
-        vapid_claims={"sub": VAPID_EMAIL}
-    )
+    """
+    Send a web push notification with detailed Render logs.
+    If this fails, Render logs will show STATUS/BODY so we can know
+    whether it is old subscription, wrong VAPID pair, expired endpoint, etc.
+    """
+    try:
+        endpoint = (sub_info or {}).get("endpoint", "")
+        print("=" * 80)
+        print("🔔 PUSH ATTEMPT")
+        print("Endpoint:", endpoint[:140])
+        print("VAPID public set:", bool(VAPID_PUBLIC_KEY))
+        print("VAPID private set:", bool(VAPID_PRIVATE_KEY))
+        print("VAPID email:", VAPID_EMAIL)
+
+        if not sub_info or not endpoint:
+            raise ValueError("Invalid push subscription: missing endpoint")
+        if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+            raise ValueError("VAPID_PUBLIC_KEY or VAPID_PRIVATE_KEY missing")
+        if not VAPID_EMAIL or not VAPID_EMAIL.startswith("mailto:"):
+            raise ValueError("VAPID_EMAIL must be like mailto:your@email.com")
+
+        webpush(
+            subscription_info=sub_info,
+            data=json.dumps({"title": title, "body": message}),
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": VAPID_EMAIL}
+        )
+
+        print("✅ PUSH SUCCESS")
+        return True
+
+    except WebPushException as e:
+        print("❌ WEBPUSH EXCEPTION")
+        try:
+            print("STATUS:", e.response.status_code)
+        except Exception:
+            print("STATUS: unavailable")
+        try:
+            print("BODY:", e.response.text)
+        except Exception:
+            print("BODY: unavailable")
+        print("ERROR:", str(e))
+        raise
+
+    except Exception as e:
+        print("❌ UNKNOWN PUSH ERROR")
+        print(repr(e))
+        raise
 
 # ---------- Helpers ----------
 def today_date():
@@ -174,11 +220,84 @@ def manifest():
 def sw():
     return send_from_directory(os.getcwd(), 'service-worker.js')
 
+
+# ---------- Session / browser-state hardening ----------
+def clear_bad_session(reason=""):
+    """Clear corrupted/stale Flask session safely and redirect to login."""
+    if reason:
+        print(f"⚠️ Clearing session: {reason}")
+    session.clear()
+    resp = make_response(redirect("/"))
+    resp.delete_cookie(app.config.get("SESSION_COOKIE_NAME", "session"), path="/")
+    return resp
+
+def current_driver_or_redirect():
+    """Return (car, info, redirect_response). Prevent stale cookies from causing 500."""
+    car = session.get("car")
+    if not car:
+        return None, None, redirect("/")
+    info = DRIVERS.get(car)
+    if not info:
+        return None, None, clear_bad_session(f"unknown car in session: {car}")
+    return car, info, None
+
+@app.before_request
+def reject_abnormally_large_headers():
+    # Browser extensions or corrupted state can create very large Cookie headers.
+    # Do not crash the app; force the user back to a clean login.
+    cookie_len = len(request.headers.get("Cookie", ""))
+    if cookie_len > 12000 and request.endpoint not in {"logout", "hard_reset", "ping", "sw", "manifest"}:
+        print(f"⚠️ Huge Cookie header ({cookie_len} bytes). Clearing session.")
+        return clear_bad_session("huge cookie header")
+
+@app.route("/hard-reset")
+def hard_reset():
+    """Visit this once in normal browser to clear server cookie + client storage + service worker."""
+    session.clear()
+    html = """
+<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Brajwasi Reset</title></head><body style='font-family:Arial;padding:24px;background:#e8f4fd'>
+<h3>Resetting Brajwasi app...</h3><p>Please wait.</p>
+<script>
+(async function(){
+  try { localStorage.clear(); sessionStorage.clear(); } catch(e) {}
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch(e) {}
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+  } catch(e) {}
+  location.replace('/');
+})();
+</script></body></html>"""
+    resp = make_response(html)
+    resp.delete_cookie(app.config.get("SESSION_COOKIE_NAME", "session"), path="/")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
+
+@app.errorhandler(500)
+def internal_error(e):
+    print(f"❌ 500 error: {e}")
+    # Show a safe recovery link instead of a blank crash page.
+    return """
+    <h3>Temporary server error</h3>
+    <p>Your browser may have an old session/cache. Open <a href='/hard-reset'>Hard Reset</a> once, then login again.</p>
+    """, 500
+
 # ---------- Login ----------
 @app.route("/", methods=["GET", "POST"])
 def login():
     if "car" in session:
-        return redirect("/entry")
+        if session.get("car") in DRIVERS:
+            return redirect("/entry")
+        return clear_bad_session("unknown car on login")
     msg = ""
     if request.method == "POST":
         code = request.form["code"]
@@ -193,10 +312,9 @@ def login():
 # ---------- Entry ----------
 @app.route("/entry", methods=["GET", "POST"])
 def entry():
-    if "car" not in session:
-        return redirect("/")
-    car  = session["car"]
-    info = DRIVERS[car]
+    car, info, bad = current_driver_or_redirect()
+    if bad:
+        return bad
     msg  = ""
     cls  = "success"
 
@@ -244,10 +362,9 @@ def entry():
 # ---------- Check entry ----------
 @app.route("/check-entry", methods=["POST"])
 def check_entry():
-    if "car" not in session:
-        return jsonify({"filled": False})
-    car  = session["car"]
-    info = DRIVERS[car]
+    car, info, bad = current_driver_or_redirect()
+    if bad:
+        return jsonify({"filled": False, "reset": True})
     try:
         entry_date_str = request.json.get("entry_date", "")
         entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
@@ -264,10 +381,9 @@ def check_entry():
 # ---------- Last closing KM ----------
 @app.route("/get-last-closing", methods=["POST"])
 def get_last_closing():
-    if "car" not in session:
-        return jsonify({"closing": None})
-    car  = session["car"]
-    info = DRIVERS[car]
+    car, info, bad = current_driver_or_redirect()
+    if bad:
+        return jsonify({"closing": None, "reset": True})
     try:
         entry_date_str = request.json.get("entry_date", "")
         entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
@@ -404,8 +520,9 @@ def local_parse_spoken(text):
 # ---------- Groq voice transcription ----------
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
-    if "car" not in session:
-        return jsonify({"error": "Not logged in"}), 401
+    car, info, bad = current_driver_or_redirect()
+    if bad:
+        return jsonify({"error": "Session expired. Please login again.", "reset": True}), 401
     try:
         import requests as req_lib
         audio_file = request.files.get("audio")
@@ -537,10 +654,12 @@ Time examples:
 # ---------- Push subscription ----------
 @app.route("/subscribe-push", methods=["POST"])
 def subscribe_push():
-    if "car" not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    car = session["car"]
-    sub = request.json
+    car, info, bad = current_driver_or_redirect()
+    if bad:
+        return jsonify({"error": "Session expired. Please login again.", "reset": True}), 401
+    sub = request.get_json(silent=True) or {}
+    if not sub.get("endpoint") or not sub.get("keys"):
+        return jsonify({"error": "Invalid push subscription"}), 400
     save_sub(car, sub)
     return jsonify({"ok": True})
 
@@ -588,12 +707,15 @@ def admin():
                 for k in dead:
                     delete_sub(k)
 
-                if sent == 0 and failed == 0:
-                    msg = "⚠️ No subscribed drivers found. Drivers must allow notifications first."
-                    cls = "error"
-                else:
+                if sent > 0:
                     msg = f"✅ Sent to {sent} driver(s)." + (f" {failed} failed — check Render logs." if failed else "")
                     cls = "success"
+                elif failed > 0:
+                    msg = f"❌ Sent to 0 driver(s). {failed} failed. Old/invalid subscriptions were removed if expired. Ask drivers to tap 🔔 again."
+                    cls = "error"
+                else:
+                    msg = "⚠️ No subscribed drivers found. Drivers must allow notifications first."
+                    cls = "error"
             except Exception as e:
                 msg = f"Error: {e}"
 
@@ -669,6 +791,35 @@ def mongo_test():
         return jsonify({"status": "✅ MongoDB connected", "subscriptions": count, "drivers": docs})
     except Exception as e:
         return jsonify({"status": f"❌ Error: {e}"})
+
+
+@app.after_request
+def add_no_cache_for_dynamic_pages(resp):
+    if request.endpoint in {"login", "entry", "admin"}:
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
+
+@app.route("/clear-push-subs")
+def clear_push_subs():
+    """Temporary maintenance route: clear old push subscriptions after VAPID changes."""
+    code = request.args.get("code", "")
+    if code != ADMIN_CODE:
+        return jsonify({"ok": False, "error": "Invalid admin code. Use /clear-push-subs?code=YOUR_ADMIN_CODE"}), 403
+
+    col = get_col()
+    if col is not None:
+        result = col.delete_many({})
+        print(f"🧹 Cleared {result.deleted_count} MongoDB push subscriptions")
+        return jsonify({"ok": True, "deleted": result.deleted_count, "storage": "mongodb"})
+
+    deleted = 0
+    if os.path.exists(SUBS_FILE):
+        os.remove(SUBS_FILE)
+        deleted = "file_removed"
+    print("🧹 Cleared file push subscriptions")
+    return jsonify({"ok": True, "deleted": deleted, "storage": "file"})
+
 
 @app.route("/logout")
 def logout():
