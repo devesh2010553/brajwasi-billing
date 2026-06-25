@@ -45,3 +45,10 @@ form button:hover {
     color: green;
     text-align: center;
 }
+.login-logo-icon {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  border-radius: 16px;
+  margin-bottom: 8px;
+}
