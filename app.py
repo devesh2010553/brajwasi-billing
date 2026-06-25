@@ -5,6 +5,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from pywebpush import webpush, WebPushException
 from pymongo import MongoClient
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
@@ -55,6 +56,85 @@ def get_col():
 
 # ---------- Subscription CRUD (MongoDB primary, file fallback) ----------
 SUBS_FILE = "subscriptions.json"
+
+
+# ---------- Entry page photo / watermark config ----------
+ENTRY_PHOTO_DIR = os.path.join("static", "uploads")
+ENTRY_PHOTO_SETTINGS_FILE = "entry_photo_settings.json"
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+
+
+def allowed_image_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+
+
+def load_entry_photo_settings():
+    """Return admin-controlled entry photo settings."""
+    default = {"mode": "hide", "url": "", "filename": ""}
+    if os.path.exists(ENTRY_PHOTO_SETTINGS_FILE):
+        try:
+            with open(ENTRY_PHOTO_SETTINGS_FILE, "r") as f:
+                data = json.load(f)
+            default.update({k: data.get(k, default[k]) for k in default})
+        except Exception as e:
+            print(f"❌ entry photo settings load error: {e}")
+    filename = default.get("filename") or ""
+    if filename:
+        photo_path = os.path.join(ENTRY_PHOTO_DIR, filename)
+        if os.path.exists(photo_path):
+            default["url"] = f"/static/uploads/{filename}"
+            default["version"] = int(os.path.getmtime(photo_path))
+        else:
+            default["url"] = ""
+            default["version"] = 0
+    else:
+        default["version"] = 0
+    if default.get("mode") not in ["hide", "watermark", "bottom"]:
+        default["mode"] = "hide"
+    return default
+
+
+def save_entry_photo_settings(settings):
+    with open(ENTRY_PHOTO_SETTINGS_FILE, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
+def save_uploaded_entry_photo(file_storage, mode):
+    """Save admin-uploaded image and return updated settings."""
+    os.makedirs(ENTRY_PHOTO_DIR, exist_ok=True)
+    current = load_entry_photo_settings()
+
+    # If mode is hide, keep the image saved but hide it on driver page.
+    if mode == "hide":
+        current["mode"] = "hide"
+        save_entry_photo_settings(current)
+        return current
+
+    # New upload is optional if an old image already exists.
+    if file_storage and file_storage.filename:
+        if not allowed_image_file(file_storage.filename):
+            raise ValueError("Only PNG, JPG, JPEG, WEBP or GIF images are allowed")
+
+        # Delete old uploaded entry photos made by this feature.
+        for old in os.listdir(ENTRY_PHOTO_DIR):
+            if old.startswith("entry_photo."):
+                try:
+                    os.remove(os.path.join(ENTRY_PHOTO_DIR, old))
+                except Exception:
+                    pass
+
+        ext = secure_filename(file_storage.filename).rsplit(".", 1)[1].lower()
+        filename = f"entry_photo.{ext}"
+        file_storage.save(os.path.join(ENTRY_PHOTO_DIR, filename))
+        current["filename"] = filename
+        current["url"] = f"/static/uploads/{filename}"
+
+    if not current.get("filename"):
+        raise ValueError("Please upload an image first")
+
+    current["mode"] = mode
+    save_entry_photo_settings(current)
+    return current
 
 def _file_load():
     if os.path.exists(SUBS_FILE):
@@ -257,7 +337,8 @@ def entry():
 
     return render_template("entry.html", car=car, msg=msg, cls=cls,
                            today=today_date().isoformat(),
-                           vapid_public_key=VAPID_PUBLIC_KEY)
+                           vapid_public_key=VAPID_PUBLIC_KEY,
+                           entry_photo=load_entry_photo_settings())
 
 # ---------- Check entry ----------
 @app.route("/check-entry", methods=["POST"])
@@ -494,6 +575,24 @@ def admin():
             except Exception as e:
                 msg = f"Error: {e}"
 
+        elif action == "entry_photo":
+            try:
+                mode = request.form.get("photo_mode", "hide")
+                if mode not in ["hide", "watermark", "bottom"]:
+                    mode = "hide"
+                photo_file = request.files.get("entry_photo")
+                settings = save_uploaded_entry_photo(photo_file, mode)
+                if settings.get("mode") == "hide":
+                    msg = "✅ Entry page photo hidden."
+                elif settings.get("mode") == "watermark":
+                    msg = "✅ Entry page photo set as light watermark."
+                else:
+                    msg = "✅ Entry page photo set at bottom of entry page."
+                cls = "success"
+            except Exception as e:
+                msg = f"Error: {e}"
+                cls = "error"
+
         elif action == "reset":
             try:
                 month         = int(request.form["month"])
@@ -553,7 +652,8 @@ def admin():
 
     return render_template("admin.html", msg=msg, cls=cls,
                            cur_month=now.month, cur_year=now.year,
-                           drivers=drivers, subs=subs)
+                           drivers=drivers, subs=subs,
+                           entry_photo_settings=load_entry_photo_settings())
 
 @app.route("/clear-push-subs")
 def clear_push_subs():

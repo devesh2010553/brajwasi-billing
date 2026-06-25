@@ -42,6 +42,15 @@ textarea { resize:vertical; min-height:75px; }
 .modal-btns button { flex:1; padding:10px; border-radius:9px; border:none; font-size:0.9rem; font-weight:600; cursor:pointer; }
 .btn-confirm { background:var(--red); color:#fff; }
 .btn-cancel { background:#f1f5f9; color:var(--text); }
+
+input[type=file] { width:100%; background:var(--input-bg); border:1.5px dashed var(--border); border-radius:9px; color:var(--text); font-size:0.86rem; padding:10px 12px; font-family:inherit; }
+.radio-row { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+.radio-option { display:flex; align-items:center; gap:8px; background:#f8fbff; border:1px solid var(--border); border-radius:9px; padding:9px 10px; font-size:0.85rem; color:var(--text); }
+.radio-option input { width:auto; }
+.photo-preview { margin-top:10px; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:#f8fbff; }
+.photo-preview img { width:100%; display:block; max-height:180px; object-fit:contain; }
+.small-note { font-size:0.76rem; color:var(--muted); line-height:1.45; margin-top:8px; }
+.btn-green { background:linear-gradient(135deg,var(--green),#15803d); }
 </style>
 </head>
 <body>
@@ -73,6 +82,35 @@ textarea { resize:vertical; min-height:75px; }
     <label>Admin Code</label>
     <input type="password" name="code" placeholder="Admin code" required>
     <button type="submit" class="btn btn-purple" id="notifyBtn">📤 Send Notification</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-title">🖼️ Entry Page Photo</div>
+  <p class="small-note" style="margin-top:0;margin-bottom:10px;">
+    Upload one photo and choose how drivers see it: light watermark, bottom of entry page, or hidden.
+  </p>
+  {% if entry_photo_settings and entry_photo_settings.url %}
+  <div class="photo-preview">
+    <img src="{{ entry_photo_settings.url }}?v={{ entry_photo_settings.version|default(0) }}" alt="Current entry photo">
+  </div>
+  <p class="small-note">Current mode: <b>{{ entry_photo_settings.mode|default('hide') }}</b></p>
+  {% else %}
+  <p class="small-note">No photo uploaded yet.</p>
+  {% endif %}
+  <form method="post" enctype="multipart/form-data" id="photoForm">
+    <input type="hidden" name="action" value="entry_photo">
+    <label>Upload Photo</label>
+    <input type="file" name="entry_photo" accept="image/png,image/jpeg,image/webp,image/gif">
+    <label>Show Photo As</label>
+    <div class="radio-row">
+      <label class="radio-option"><input type="radio" name="photo_mode" value="watermark" {% if entry_photo_settings and entry_photo_settings.mode=='watermark' %}checked{% endif %}> Light watermark behind entry form</label>
+      <label class="radio-option"><input type="radio" name="photo_mode" value="bottom" {% if entry_photo_settings and entry_photo_settings.mode=='bottom' %}checked{% endif %}> Show at bottom after Save Entry button</label>
+      <label class="radio-option"><input type="radio" name="photo_mode" value="hide" {% if not entry_photo_settings or entry_photo_settings.mode=='hide' %}checked{% endif %}> Hide photo</label>
+    </div>
+    <label>Admin Code</label>
+    <input type="password" name="code" placeholder="Admin code" required>
+    <button type="submit" class="btn btn-green" id="photoBtn">💾 Save Photo Setting</button>
   </form>
 </div>
 <div class="card">
@@ -116,6 +154,9 @@ resetForm.addEventListener('submit',function(e){if(confirmed)return;e.preventDef
 document.getElementById('confirmYes').addEventListener('click',()=>{modal.classList.remove('show');confirmed=true;resetBtn.disabled=true;resetBtn.textContent='⏳ Updating...';resetForm.submit();});
 document.getElementById('confirmNo').addEventListener('click',()=>modal.classList.remove('show'));
 document.getElementById('notifyForm').addEventListener('submit',()=>{const b=document.getElementById('notifyBtn');b.disabled=true;b.textContent='⏳ Sending...';});
+const photoForm=document.getElementById('photoForm');
+if(photoForm){photoForm.addEventListener('submit',()=>{const b=document.getElementById('photoBtn');b.disabled=true;b.textContent='⏳ Saving...';});}
+
 </script>
 </body>
 </html>
