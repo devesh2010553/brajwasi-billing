@@ -339,21 +339,52 @@ async function enablePush() {
 notifBtn.addEventListener('click', enablePush);
 updateNotifUI();
 
-window.addEventListener('load', async () => {
-  setTimeout(async () => {
-    updateNotifUI();
-    // Browsers do not allow true automatic permission popup. This one-time tooltip asks driver to tap the bell.
-    if (Notification.permission === 'default' && localStorage.getItem('notifAskedOnce') !== 'yes') {
-      notifTooltip.textContent = 'Tap 🔔 to allow notifications';
-      notifTooltip.classList.add('show');
-      localStorage.setItem('notifAskedOnce', 'yes');
-      setTimeout(() => notifTooltip.classList.remove('show'), 6000);
+async function autoAskNotificationOnce() {
+  updateNotifUI();
+
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return;
+  }
+
+  // If already allowed, silently refresh subscription for this driver/car.
+  if (Notification.permission === 'granted') {
+    try { await savePushSubscription(); } catch(e) { console.log('Auto subscription refresh failed:', e); }
+    return;
+  }
+
+  if (Notification.permission === 'denied') {
+    return;
+  }
+
+  // First app open: try automatic browser permission popup once.
+  // Chrome may require a user gesture on some devices; if blocked, we show the bell hint.
+  if (localStorage.getItem('notifAutoAskedOnce') !== 'yes') {
+    localStorage.setItem('notifAutoAskedOnce', 'yes');
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm === 'granted') {
+        await savePushSubscription();
+        updateNotifUI();
+        notifTooltip.textContent = 'Notifications enabled ✓';
+        notifTooltip.classList.add('show');
+        setTimeout(() => notifTooltip.classList.remove('show'), 2500);
+        return;
+      }
+    } catch(e) {
+      console.log('Auto notification permission failed:', e);
     }
-    // If permission already granted, silently re-save subscription for this driver/car.
-    if (Notification.permission === 'granted') {
-      try { await savePushSubscription(); } catch(e) { console.log(e); }
-    }
-  }, 1200);
+  }
+
+  // Fallback for browsers that refuse automatic permission prompt.
+  if (Notification.permission === 'default') {
+    notifTooltip.textContent = 'Tap 🔔 to allow notifications';
+    notifTooltip.classList.add('show');
+    setTimeout(() => notifTooltip.classList.remove('show'), 7000);
+  }
+}
+
+window.addEventListener('load', () => {
+  setTimeout(autoAskNotificationOnce, 1200);
 });
 
 // ── Service Worker ───────────────────────────────────────────────────────────
@@ -477,19 +508,61 @@ function parseDigitChain(tokens) {
 }
 
 function parseIndianNumber(tokens) {
-  const multiplierWords = new Set(['sau','सो','सौ','hazaar','hazar','हजार','हज़ार','lakh','laakh','लाख','crore','करोड़']);
+  const multiplierWords = new Set([
+    'sau','soo','so','सो','सौ',
+    'hazaar','hazar','hajaar','हजार','हज़ार',
+    'lakh','laakh','lac','lak','लाख',
+    'crore','karod','करोड़','करोड'
+  ]);
   if (!tokens.some(t => multiplierWords.has(t))) return null;
 
-  let total = 0, current = 0;
-  for (const t of tokens) {
-    if (/^\d+$/.test(t)) { current += parseInt(t, 10); continue; }
-    if (valueMap[t] !== undefined) { current += valueMap[t]; continue; }
-    if (t === 'sau' || t === 'सो' || t === 'सौ') { current = (current || 1) * 100; continue; }
-    if (['hazaar','hazar','हजार','हज़ार'].includes(t)) { total += (current || 1) * 1000; current = 0; continue; }
-    if (['lakh','laakh','लाख'].includes(t)) { total += (current || 1) * 100000; current = 0; continue; }
-    if (['crore','करोड़'].includes(t)) { total += (current || 1) * 10000000; current = 0; continue; }
+  let total = 0;
+  let current = 0;
+  let used = false;
+
+  function tokenValue(t) {
+    if (/^\d+$/.test(t)) return parseInt(t, 10);
+    return valueMap[t];
   }
-  return total + current ? String(total + current) : null;
+
+  for (const t of tokens) {
+    const v = tokenValue(t);
+    if (v !== undefined && v !== null && !Number.isNaN(v)) {
+      current += v;
+      used = true;
+      continue;
+    }
+
+    if (['sau','soo','so','सो','सौ'].includes(t)) {
+      current = (current || 1) * 100;
+      used = true;
+      continue;
+    }
+
+    if (['hazaar','hazar','hajaar','हजार','हज़ार'].includes(t)) {
+      total += (current || 1) * 1000;
+      current = 0;
+      used = true;
+      continue;
+    }
+
+    if (['lakh','laakh','lac','lak','लाख'].includes(t)) {
+      total += (current || 1) * 100000;
+      current = 0;
+      used = true;
+      continue;
+    }
+
+    if (['crore','karod','करोड़','करोड'].includes(t)) {
+      total += (current || 1) * 10000000;
+      current = 0;
+      used = true;
+      continue;
+    }
+  }
+
+  const result = total + current;
+  return used && result > 0 ? String(result) : null;
 }
 
 function parseSpokenTime(tokens, rawText) {
@@ -531,9 +604,9 @@ function parseSpokenTime(tokens, rawText) {
   }
   if (h == null) return null;
 
-  const pm = /(pm|पी एम|shaam|शाम|raat|रात)/.test(raw);
+  const pm = /(pm|p\.?m\.?|पीएम|पी एम|shaam|sham|शाम|raat|rat|रात|night)/.test(raw);
   const afternoon = /(dopahar|दोपहर)/.test(raw);
-  const am = /(am|ए एम|subah|सुबह)/.test(raw);
+  const am = /(am|a\.?m\.?|एएम|ए एम|subah|सुबह|morning|sawere|savere)/.test(raw);
   if ((pm || afternoon) && h < 12) h += 12;
   if (am && h === 12) h = 0;
   if (h < 0) h += 12;
@@ -545,10 +618,15 @@ function parseSpeechText(raw, type) {
   const tokens = tokenize(raw);
   if (!tokens.length) return null;
   if (type === 'time') return parseSpokenTime(tokens, raw);
-  const digitChain = parseDigitChain(tokens);
-  if (digitChain) return digitChain;
+
+  // IMPORTANT: multiplier words like lakh/hazaar must be parsed BEFORE digit-chain.
+  // Otherwise "1 lakh 999" may become "1999" instead of "100999".
   const indian = parseIndianNumber(tokens);
   if (indian) return indian;
+
+  const digitChain = parseDigitChain(tokens);
+  if (digitChain) return digitChain;
+
   const numeric = normalizeHindiText(raw).match(/\d+/g);
   return numeric ? numeric.join('') : null;
 }

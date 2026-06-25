@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, send_from_directory, jsonify
-import json, os, math, calendar
+import json, os, math, calendar, re
 from datetime import datetime, timedelta, time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -26,34 +26,36 @@ creds = service_account.Credentials.from_service_account_info(
 sheets = build("sheets", "v4", credentials=creds)
 
 # ---------- VAPID ----------
-VAPID_PUBLIC_KEY  = os.getenv("VAPID_PUBLIC_KEY",  "BOuqrSKgWKp_oxCo3B21vfHo2_-zCD-MbkEDUljwkLE01U4bt_UU1Oah_gpgpbSoE-3QntQYPo1WxcbU8iVhX5A")
-VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "h_QIorXoPcAXH_3nTHYTBSSJXvtLsr2-zZvc0MFZ_lw")
+VAPID_PUBLIC_KEY  = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 VAPID_EMAIL       = os.getenv("VAPID_EMAIL", "mailto:admin@brajwasitravels.com")
+if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+    print("⚠️ VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY missing. Push will not work until env vars are set.")
 
 # ---------- MongoDB ----------
-MONGO_URI     = os.getenv("MONGO_URI", "")
+MONGO_URI  = os.getenv("MONGO_URI", "")
 _mongo_client = None
 _mongo_col    = None
 
 def get_col():
-    """Return MongoDB collection, connecting once and reusing. None if unavailable."""
+    """Return MongoDB collection, creating connection once. Returns None if unavailable."""
     global _mongo_client, _mongo_col
     if _mongo_col is not None:
         return _mongo_col
     if not MONGO_URI:
-        print("⚠️  MONGO_URI not set — using file fallback for subscriptions")
+        print("⚠️  MONGO_URI not set — using file fallback")
         return None
     try:
         _mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        _mongo_client.admin.command("ping")
+        _mongo_client.admin.command("ping")   # verify connection
         _mongo_col = _mongo_client["brajwasi"]["subscriptions"]
         print("✅ MongoDB connected")
         return _mongo_col
     except Exception as e:
-        print(f"❌ MongoDB connection failed: {e}")
+        print(f"❌ MongoDB failed: {e}")
         return None
 
-# ---------- Subscription CRUD (MongoDB primary, file fallback) ----------
+# ---------- Subscription CRUD ----------
 SUBS_FILE = "subscriptions.json"
 
 def _file_load():
@@ -84,21 +86,22 @@ def save_sub(car_key, sub_info):
                 {"$set": {"sub": sub_info, "updated_at": datetime.utcnow()}},
                 upsert=True
             )
-            print(f"✅ MongoDB: saved subscription for {car_key}")
+            print(f"✅ MongoDB: saved sub for {car_key}")
             return
         except Exception as e:
             print(f"❌ save_sub MongoDB error: {e}")
+    # file fallback
     subs = _file_load()
     subs[car_key] = sub_info
     _file_save(subs)
-    print(f"✅ File: saved subscription for {car_key}")
+    print(f"✅ File: saved sub for {car_key}")
 
 def delete_sub(car_key):
     col = get_col()
     if col is not None:
         try:
             col.delete_one({"_id": car_key})
-            print(f"🗑️  MongoDB: deleted subscription for {car_key}")
+            print(f"🗑️  MongoDB: deleted sub for {car_key}")
             return
         except Exception as e:
             print(f"❌ delete_sub MongoDB error: {e}")
@@ -108,11 +111,11 @@ def delete_sub(car_key):
 
 # ---------- Push ----------
 def send_push(sub_info, message, title="Brajwasi Travels 🚗"):
-    """Send a single web push notification. Raises WebPushException on failure."""
+    """Send a web push notification. sub_info is the full subscription dict."""
     webpush(
         subscription_info=sub_info,
         data=json.dumps({"title": title, "body": message}),
-        vapid_private_key=VAPID_PRIVATE_KEY,
+        vapid_private_key=VAPID_PRIVATE_KEY,   # pass raw base64 string directly
         vapid_claims={"sub": VAPID_EMAIL}
     )
 
@@ -172,36 +175,10 @@ def sw():
     return send_from_directory(os.getcwd(), 'service-worker.js')
 
 # ---------- Login ----------
-
-# ---------- Safe session helper ----------
-def current_driver_or_redirect_json(json_mode=False):
-    car = session.get("car")
-    if not car:
-        if json_mode:
-            return None, None, jsonify({"error": "Not logged in"}), 401
-        return None, None, redirect("/"), 302
-    info = DRIVERS.get(car)
-    if not info:
-        print(f"⚠️ Stale session car not found in driver.json: {car}")
-        session.clear()
-        if json_mode:
-            return None, None, jsonify({"error": "Session expired. Please login again."}), 401
-        return None, None, redirect("/"), 302
-    return car, info, None, None
-
-@app.route("/hard-reset")
-def hard_reset():
-    session.clear()
-    resp = redirect("/")
-    resp.set_cookie(app.config.get("SESSION_COOKIE_NAME", "session"), "", expires=0)
-    return resp
-
 @app.route("/", methods=["GET", "POST"])
 def login():
     if "car" in session:
-        if session.get("car") in DRIVERS:
-            return redirect("/entry")
-        session.clear()
+        return redirect("/entry")
     msg = ""
     if request.method == "POST":
         code = request.form["code"]
@@ -216,9 +193,10 @@ def login():
 # ---------- Entry ----------
 @app.route("/entry", methods=["GET", "POST"])
 def entry():
-    car, info, resp, status = current_driver_or_redirect_json(json_mode=False)
-    if resp is not None:
-        return resp
+    if "car" not in session:
+        return redirect("/")
+    car  = session["car"]
+    info = DRIVERS[car]
     msg  = ""
     cls  = "success"
 
@@ -266,9 +244,10 @@ def entry():
 # ---------- Check entry ----------
 @app.route("/check-entry", methods=["POST"])
 def check_entry():
-    car, info, resp, status = current_driver_or_redirect_json(json_mode=True)
-    if resp is not None:
-        return jsonify({"filled": False, "error": "Login again"})
+    if "car" not in session:
+        return jsonify({"filled": False})
+    car  = session["car"]
+    info = DRIVERS[car]
     try:
         entry_date_str = request.json.get("entry_date", "")
         entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
@@ -285,9 +264,10 @@ def check_entry():
 # ---------- Last closing KM ----------
 @app.route("/get-last-closing", methods=["POST"])
 def get_last_closing():
-    car, info, resp, status = current_driver_or_redirect_json(json_mode=True)
-    if resp is not None:
-        return jsonify({"closing": None, "error": "Login again"})
+    if "car" not in session:
+        return jsonify({"closing": None})
+    car  = session["car"]
+    info = DRIVERS[car]
     try:
         entry_date_str = request.json.get("entry_date", "")
         entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
@@ -304,12 +284,128 @@ def get_last_closing():
     except Exception as e:
         return jsonify({"closing": None, "error": str(e)})
 
+
+# ---------- Hindi/Hinglish number + time parser ----------
+DIGIT_WORDS = {
+    "zero":"0", "jiro":"0", "shunya":"0", "sunna":"0", "0":"0", "०":"0",
+    "ek":"1", "aik":"1", "एक":"1", "one":"1", "1":"1", "१":"1",
+    "do":"2", "du":"2", "doo":"2", "दू":"2", "दो":"2", "two":"2", "to":"2", "2":"2", "२":"2",
+    "teen":"3", "tin":"3", "तीन":"3", "three":"3", "3":"3", "३":"3",
+    "char":"4", "chaar":"4", "चार":"4", "four":"4", "4":"4", "४":"4",
+    "panch":"5", "paanch":"5", "panchh":"5", "पांच":"5", "पाँच":"5", "five":"5", "5":"5", "५":"5",
+    "chhe":"6", "che":"6", "chhah":"6", "छे":"6", "छह":"6", "six":"6", "6":"6", "६":"6",
+    "saat":"7", "sat":"7", "सात":"7", "seven":"7", "7":"7", "७":"7",
+    "aath":"8", "ath":"8", "आठ":"8", "eight":"8", "8":"8", "८":"8",
+    "nau":"9", "nav":"9", "no":"9", "nine":"9", "नौ":"9", "9":"9", "९":"9",
+}
+
+NUM_WORDS = {
+    **{k:int(v) for k,v in DIGIT_WORDS.items() if v.isdigit()},
+    "das":10,"dus":10,"ten":10,"gyarah":11,"gyaarah":11,"barah":12,"baarah":12,"terah":13,"chaudah":14,
+    "pandrah":15,"pandra":15,"solah":16,"satrah":17,"atharah":18,"unnis":19,"bees":20,"bis":20,
+    "ikkees":21,"ikkis":21,"baees":22,"bais":22,"teis":23,"chaubees":24,"pachchees":25,"pachis":25,
+    "chhabbees":26,"sattaees":27,"athais":28,"athaees":28,"untees":29,"tis":30,"tees":30,
+    "ikattees":31,"battees":32,"taintees":33,"chautees":34,"paintees":35,"chhattees":36,"saintees":37,
+    "artees":38,"untaalees":39,"chalees":40,"chaalees":40,"bayalees":42,"pachas":50,"pachaas":50,
+    "sath":60,"saath":60,"sattar":70,"seventy":70,"assi":80,"eighty":80,"nabbe":90,"ninety":90,
+    "ninyanve":99,"ninyanaye":99,"ninyanave":99,"ninyaanve":99,"ninaanve":99,"ninety nine":99,
+}
+SCALE_WORDS = {"sau":100,"soo":100,"so":100,"hundred":100,"hazar":1000,"hazaar":1000,"hajar":1000,"thousand":1000,"lakh":100000,"laakh":100000,"lac":100000,"crore":10000000}
+FILLERS = {"km","kilometer","kilometre","kilo","reading","hai","he","hain","tha","the","aur","or","and","matlab","yaani","yani","woh","wo","toh","to","ji","please","fast","jaldi","करीब","लगभग"}
+
+def _tokens(text):
+    text = text.lower().replace(",", " ").replace("-", " ")
+    return re.findall(r"[a-zA-Zअ-ह०-९0-9:]+", text)
+
+def local_digit_chain(text):
+    toks = [t for t in _tokens(text) if t not in FILLERS]
+    digits = []
+    for w in toks:
+        if re.fullmatch(r"[0-9०-९]+", w):
+            trans = str.maketrans("०१२३४५६७८९", "0123456789")
+            digits.append(w.translate(trans))
+        elif w in DIGIT_WORDS:
+            digits.append(DIGIT_WORDS[w])
+        else:
+            return None
+    if len(digits) >= 3:
+        return "".join(digits)
+    return None
+
+def local_number_value(text):
+    toks = [t for t in _tokens(text) if t not in FILLERS]
+    if not toks:
+        return None
+    total = 0
+    current = 0
+    used = False
+    i = 0
+    while i < len(toks):
+        w = toks[i]
+        if re.fullmatch(r"[0-9०-९]+", w):
+            trans = str.maketrans("०१२३४५६७८९", "0123456789")
+            current += int(w.translate(trans)); used = True
+        elif w in NUM_WORDS:
+            current += NUM_WORDS[w]; used = True
+        elif w in SCALE_WORDS:
+            scale = SCALE_WORDS[w]
+            if current == 0: current = 1
+            if scale >= 1000:
+                total += current * scale
+                current = 0
+            else:
+                current *= scale
+            used = True
+        else:
+            # allow combined forms like 9so / 9soo
+            m = re.fullmatch(r"([0-9]+)(so|soo|sau)", w)
+            if m:
+                current += int(m.group(1)) * 100; used = True
+            else:
+                return None
+        i += 1
+    if used:
+        return str(total + current)
+    return None
+
+def local_time_value(text):
+    t = text.lower()
+    toks = _tokens(t)
+    has_time_word = any(w in t for w in ["baje","bajke","bajkar","am","pm","subah","shaam","raat","dopahar","sawere","time"])
+    m = re.search(r"\b(\d{1,2})[:.](\d{1,2})\s*(am|pm)?\b", t)
+    if m:
+        hh, mm = int(m.group(1)), int(m.group(2)); ap = m.group(3)
+        if ap == "pm" and hh < 12: hh += 12
+        if ap == "am" and hh == 12: hh = 0
+        return f"{hh:02d}:{mm:02d}"
+    if not has_time_word:
+        return None
+    nums = []
+    for w in toks:
+        if w in NUM_WORDS: nums.append(NUM_WORDS[w])
+        elif re.fullmatch(r"\d+", w): nums.append(int(w))
+    hh = nums[0] if nums else None
+    mm = nums[1] if len(nums) > 1 else 0
+    if "saade" in toks or "sadhe" in toks: mm = 30
+    if "sawa" in toks: mm = 15
+    if "paune" in toks and hh: hh -= 1; mm = 45
+    if "dhaai" in toks or "dhai" in toks: hh, mm = 2, 30
+    if hh is None: return None
+    if any(x in t for x in ["shaam","raat","pm"]) and hh < 12: hh += 12
+    if any(x in t for x in ["subah","sawere","am"]) and hh == 12: hh = 0
+    if "dopahar" in t and 1 <= hh <= 4: hh += 12
+    if 0 <= hh <= 23 and 0 <= mm <= 59:
+        return f"{hh:02d}:{mm:02d}"
+    return None
+
+def local_parse_spoken(text):
+    return local_time_value(text) or local_digit_chain(text) or local_number_value(text)
+
 # ---------- Groq voice transcription ----------
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
-    car, info, resp, status = current_driver_or_redirect_json(json_mode=True)
-    if resp is not None:
-        return resp, status
+    if "car" not in session:
+        return jsonify({"error": "Not logged in"}), 401
     try:
         import requests as req_lib
         audio_file = request.files.get("audio")
@@ -335,6 +431,11 @@ def transcribe():
 
         raw_text = resp.text.strip()
 
+        # First use deterministic local parser. This fixes digit-by-digit speech like "आठ नौ एक दू" => 8912.
+        local_parsed = local_parse_spoken(raw_text)
+        if local_parsed:
+            return jsonify({"raw": raw_text, "parsed": local_parsed})
+
         parse_resp = req_lib.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {groq_key}",
@@ -344,53 +445,56 @@ def transcribe():
                 "temperature": 0,
                 "messages": [
                     {"role": "system", "content": """You are a number and time parser for a vehicle daily log app used by Indian drivers.
-Input is spoken Hindi, English, Hinglish, or mixed language, transcribed by speech-to-text. Extract ONLY the number or time being said.
+Input is spoken Hindi, English, Hinglish, or mixed language. Extract ONLY the number or time being said.
 
-═══ STEP 1: DETECT THE SPEAKING STYLE ═══
-STYLE A — DIGIT-BY-DIGIT (each word is a single digit 0-9, spoken in sequence with NO multiplier words):
-  "aath nau ek do" → digits 8,9,1,2 → concatenate → 8912
-  "do teen char paanch" → 2,3,4,5 → 2345
-  "one two three four" → 1234
-  "नौ नौ एक दो" → 9912
-  RULE: If you hear single-digit words (ek/do/teen/char/paanch/chhe/saat/aath/nau, or 1-9, or zero/sunya) in sequence with NO sau/hazaar/lakh connecting them, concatenate digits directly. Do NOT do place-value math.
+═══ HINDI NUMBER UNITS — memorize all ═══
+ek=1, do=2, teen=3, char=4, paanch=5, chhe/chheh/chhah=6, saat=7, aath=8, nau=9, das=10
+gyarah=11, barah=12, terah=13, chaudah=14, pandrah=15, solah=16, satrah=17, atharah=18, unnis=19
+bees=20, ikkees=21, baees=22, teis=23, chaubees=24, pachchees=25, chhabbees=26, sattaees=27, athaees=28, untees=29
+tees=30, ikattees=31, battees=32, taintees=33, chautees=34, paintees=35, chhattees=36, saintees=37, artees=38, untaalees=39
+chaalees=40, iktaalees=41, bayaalees=42, taintaalees=43, chavaalees=44, paintaalees=45, chhiyaalees=46, saintaalees=47, artaalees=48, unchaas=49
+pachaas=50, ikyavan=51, baavan=52, tirpan=53, chauvan=54, pachpan=55, chhappan=56, sattavan=57, atthavan=58, unsath=59
+saath/saathi=60, iksath=61, basath=62, tirsath=63, chausath=64, painsath=65, chhiyasath=66, sarsath=67, arsath=68, unhattar=69
+sattar=70, ikhattar=71, bahattar=72, tihattar=73, chauhattar=74, pachhattar=75, chhihattar=76, sathattar=77, athahattar=78, unnaasee=79
+assi=80, ikyaasee=81, bayaasee=82, tiraasee=83, chauraasee=84, pachaasee=85, chhiyaasee=86, sataasee=87, athaasee=88, navaasee=89
+nabbe=90, ikyaanave=91, baanave=92, tiraanave=93, chauraanave=94, panchaanave=95, chhiyaanave=96, sataanave=97, athaanave=98, ninaanave=99
+sau=100, hazaar/hazar=1000, lakh/laakh=100000, crore=10000000
 
-STYLE B — WORD-VALUE (place-value words with multipliers: sau/hazaar/lakh/crore):
-  "char hazaar nau sau nabbe" → char(4)*1000 + nau(9)*100 + nabbe(90) = 4990
-  "battees hazaar paanch sau" → 32*1000 + 5*100 = 32500
-  RULE: Only use place-value math when multiplier words (sau, hazaar, lakh, laakh, crore) are present.
+CRITICAL — lakh and laakh are IDENTICAL, both = 100,000:
+  "nau lakh" = "nau laakh" = 9,00,000 = 900000
+  "ek lakh" = "ek laakh" = 1,00,000 = 100000
+  "paanch lakh" = "paanch laakh" = 5,00,000 = 500000
+  "saat laakh" = "saat lakh" = 7,00,000 = 700000
 
-DEFAULT: For short sequences of 3-6 simple digit words with NO sau/hazaar/lakh present, ALWAYS use DIGIT-BY-DIGIT — this is how Indian drivers read odometer readings aloud.
-
-═══ HINDI NUMBER WORDS ═══
-Digits 0-9: sunya/zero=0, ek=1, do=2, teen=3, char=4, paanch=5, chhe/chheh=6, saat=7, aath=8, nau=9
-Compound (word-value mode only): das=10, gyarah=11, barah=12, terah=13, chaudah=14, pandrah=15, solah=16, satrah=17, atharah=18, unnis=19, bees=20, tees=30, chaalees=40, pachaas=50, saath=60, sattar=70, assi=80, nabbe=90, pachpan=55, sattavan=57
-Multipliers: sau=100, hazaar/hazar=1000, lakh/laakh=100000 (SAME WORD), crore=10000000
-
-CRITICAL: lakh = laakh = 100000 always. "nau lakh" = "nau laakh" = 900000
-
-═══ WORD-VALUE EXAMPLES ═══
-  "char hazaar nau sau nabbe" → 4990
+Number examples:
+  "char hajar nau sau nabbe" → 4990
+  "char hajar nau soo nabbe" → 4990
+  "teen hazaar paanch sau" → 3500
   "barah hazaar teen sau pachaas" → 12350
-  "nau lakh" / "nau laakh" → 900000
+  "nau lakh" → 900000
+  "nau laakh" → 900000
   "paanch lakh bees hazaar" → 520000
+  "do laakh pachaas hazaar" → 250000
+  "ek lakh pachaas hazaar" → 150000
   "saat lakh" → 700000
   "bees hazaar" → 20000
   "teen sau" → 300
+  "pachpan" → 55
+  "baees hazaar char sau sattavan" → 22457
   "1 lakh" → 100000
+  "9 lakh" → 900000
+  "9 laakh" → 900000
+  "12345" → 12345
   "ek crore" → 10000000
-
-═══ DIGIT-BY-DIGIT EXAMPLES ═══
-  "aath nau ek do" → 8912
-  "do teen char paanch" → 2345
-  "nau nau nau nau nau" → 99999
-  "saat saat nau nau" → 7799
-  "do do do" → 222
-  "one two three four five" → 12345
 
 ═══ TIME PARSING RULES ═══
 Return 24-hour HH:MM format.
-Context: subah=morning AM, dopahar=afternoon 12-4PM, shaam=evening 4-8PM, raat=night PM
-Special: saade X = X:30, paune X = (X-1):45, sawa X = X:15, dhaai = 2:30
+Time words: subah/sawere=morning AM, dopahar=afternoon 12-4PM, shaam=evening 4-8PM, raat=night PM
+Special forms:
+  saade X = X hours 30 min (saade aath = 8:30, saade nau = 9:30)
+  paune X = X hours minus 15 min (paune nau = 8:45, paune das = 9:45)
+  sawa X = X hours 15 min (sawa chhe = 6:15, sawa saat = 7:15)
+  dhaai = 2:30
 
 Time examples:
   "paanch bajke pandrah minute" → 05:15
@@ -398,19 +502,22 @@ Time examples:
   "raat ke das baje" → 22:00
   "subah chhe bajkar bis minute" → 06:20
   "dopahar ke do baje" → 14:00
+  "raat ke gyarah baje" → 23:00
+  "teen bajke chaalees minute" → 03:40
+  "saat bajke paanch minute shaam" → 19:05
   "saade aath subah" → 08:30
   "paune nau raat" → 20:45
   "sawa chhe subah" → 06:15
+  "10 baje raat" → 22:00
   "5:15 PM" → 17:15
   "6 AM" → 06:00
   "7 baje" → 07:00
 
 ═══ OUTPUT RULES ═══
 - Return ONLY: an integer number OR HH:MM time OR the word INVALID
-- No explanation, no units, no extra words
-- Ignore filler words: um, uh, matlab, yaani, woh, toh, haan, theek hai
-- Pure digit input (e.g. "8912") passes through unchanged
-- Try hard before giving up — prefer a best-guess number over INVALID when audio is partially clear"""},
+- No explanation, no units (km, घंटे), no extra words whatsoever
+- Ignore filler words: um, uh, matlab, yaani, woh, toh
+- If input is noise, irrelevant, or unparseable: INVALID"""},
                     {"role": "user", "content": raw_text}
                 ]
             }
@@ -430,16 +537,12 @@ Time examples:
 # ---------- Push subscription ----------
 @app.route("/subscribe-push", methods=["POST"])
 def subscribe_push():
-    car, info, resp, status = current_driver_or_redirect_json(json_mode=True)
-    if resp is not None:
-        return resp, status
+    if "car" not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    car = session["car"]
     sub = request.json
-    if not sub or "endpoint" not in sub:
-        print(f"❌ subscribe-push: invalid data from {car}")
-        return jsonify({"error": "Invalid subscription data"}), 400
-    print(f"📥 subscribe-push received for {car}")
     save_sub(car, sub)
-    return jsonify({"ok": True, "car": car})
+    return jsonify({"ok": True})
 
 # ---------- Admin ----------
 @app.route("/admin", methods=["GET", "POST"])
@@ -453,7 +556,6 @@ def admin():
 
         if code != ADMIN_CODE:
             msg = "Invalid admin code"
-
         elif action == "notify":
             try:
                 target  = request.form.get("target", "all")
@@ -487,13 +589,10 @@ def admin():
                     delete_sub(k)
 
                 if sent == 0 and failed == 0:
-                    msg = "⚠️ No subscribed drivers. They must tap the 🔔 button first."
-                    cls = "error"
-                elif sent == 0:
-                    msg = f"❌ Sent to 0 driver(s). {failed} failed. Ask drivers to tap 🔔 again."
+                    msg = "⚠️ No subscribed drivers found. Drivers must allow notifications first."
                     cls = "error"
                 else:
-                    msg = f"✅ Sent to {sent} driver(s)." + (f" {failed} failed." if failed else "")
+                    msg = f"✅ Sent to {sent} driver(s)." + (f" {failed} failed — check Render logs." if failed else "")
                     cls = "success"
             except Exception as e:
                 msg = f"Error: {e}"
@@ -559,36 +658,17 @@ def admin():
                            cur_month=now.month, cur_year=now.year,
                            drivers=drivers, subs=subs)
 
-# ---------- Debug routes ----------
 @app.route("/mongo-test")
 def mongo_test():
     col = get_col()
     if col is None:
-        return jsonify({
-            "mongo": "❌ not connected",
-            "uri_set": bool(MONGO_URI)
-        })
+        return jsonify({"status": "❌ MongoDB not connected", "uri_set": bool(MONGO_URI)})
     try:
-        docs = list(col.find())
-        return jsonify({
-            "mongo": "✅ connected",
-            "subscription_count": len(docs),
-            "subscribed_cars": [d["_id"] for d in docs]
-        })
+        count = col.count_documents({})
+        docs  = [{"car": d["_id"], "updated_at": str(d.get("updated_at", ""))} for d in col.find()]
+        return jsonify({"status": "✅ MongoDB connected", "subscriptions": count, "drivers": docs})
     except Exception as e:
-        return jsonify({"mongo": f"❌ error: {e}"})
-
-@app.route("/debug-push")
-def debug_push():
-    subs = load_subs()
-    results = {}
-    for car_key, sub_info in subs.items():
-        try:
-            send_push(sub_info, "🔔 Test notification!", "Test")
-            results[car_key] = "✅ sent"
-        except Exception as e:
-            results[car_key] = f"❌ {e}"
-    return jsonify({"subscriptions_found": len(subs), "results": results})
+        return jsonify({"status": f"❌ Error: {e}"})
 
 @app.route("/logout")
 def logout():
