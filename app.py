@@ -172,10 +172,36 @@ def sw():
     return send_from_directory(os.getcwd(), 'service-worker.js')
 
 # ---------- Login ----------
+
+# ---------- Safe session helper ----------
+def current_driver_or_redirect_json(json_mode=False):
+    car = session.get("car")
+    if not car:
+        if json_mode:
+            return None, None, jsonify({"error": "Not logged in"}), 401
+        return None, None, redirect("/"), 302
+    info = DRIVERS.get(car)
+    if not info:
+        print(f"⚠️ Stale session car not found in driver.json: {car}")
+        session.clear()
+        if json_mode:
+            return None, None, jsonify({"error": "Session expired. Please login again."}), 401
+        return None, None, redirect("/"), 302
+    return car, info, None, None
+
+@app.route("/hard-reset")
+def hard_reset():
+    session.clear()
+    resp = redirect("/")
+    resp.set_cookie(app.config.get("SESSION_COOKIE_NAME", "session"), "", expires=0)
+    return resp
+
 @app.route("/", methods=["GET", "POST"])
 def login():
     if "car" in session:
-        return redirect("/entry")
+        if session.get("car") in DRIVERS:
+            return redirect("/entry")
+        session.clear()
     msg = ""
     if request.method == "POST":
         code = request.form["code"]
@@ -190,10 +216,9 @@ def login():
 # ---------- Entry ----------
 @app.route("/entry", methods=["GET", "POST"])
 def entry():
-    if "car" not in session:
-        return redirect("/")
-    car  = session["car"]
-    info = DRIVERS[car]
+    car, info, resp, status = current_driver_or_redirect_json(json_mode=False)
+    if resp is not None:
+        return resp
     msg  = ""
     cls  = "success"
 
@@ -241,10 +266,9 @@ def entry():
 # ---------- Check entry ----------
 @app.route("/check-entry", methods=["POST"])
 def check_entry():
-    if "car" not in session:
-        return jsonify({"filled": False})
-    car  = session["car"]
-    info = DRIVERS[car]
+    car, info, resp, status = current_driver_or_redirect_json(json_mode=True)
+    if resp is not None:
+        return jsonify({"filled": False, "error": "Login again"})
     try:
         entry_date_str = request.json.get("entry_date", "")
         entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
@@ -261,10 +285,9 @@ def check_entry():
 # ---------- Last closing KM ----------
 @app.route("/get-last-closing", methods=["POST"])
 def get_last_closing():
-    if "car" not in session:
-        return jsonify({"closing": None})
-    car  = session["car"]
-    info = DRIVERS[car]
+    car, info, resp, status = current_driver_or_redirect_json(json_mode=True)
+    if resp is not None:
+        return jsonify({"closing": None, "error": "Login again"})
     try:
         entry_date_str = request.json.get("entry_date", "")
         entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
@@ -284,8 +307,9 @@ def get_last_closing():
 # ---------- Groq voice transcription ----------
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
-    if "car" not in session:
-        return jsonify({"error": "Not logged in"}), 401
+    car, info, resp, status = current_driver_or_redirect_json(json_mode=True)
+    if resp is not None:
+        return resp, status
     try:
         import requests as req_lib
         audio_file = request.files.get("audio")
@@ -406,9 +430,9 @@ Time examples:
 # ---------- Push subscription ----------
 @app.route("/subscribe-push", methods=["POST"])
 def subscribe_push():
-    if "car" not in session:
-        return jsonify({"error": "Not logged in"}), 401
-    car = session["car"]
+    car, info, resp, status = current_driver_or_redirect_json(json_mode=True)
+    if resp is not None:
+        return resp, status
     sub = request.json
     if not sub or "endpoint" not in sub:
         print(f"❌ subscribe-push: invalid data from {car}")
@@ -464,6 +488,9 @@ def admin():
 
                 if sent == 0 and failed == 0:
                     msg = "⚠️ No subscribed drivers. They must tap the 🔔 button first."
+                    cls = "error"
+                elif sent == 0:
+                    msg = f"❌ Sent to 0 driver(s). {failed} failed. Ask drivers to tap 🔔 again."
                     cls = "error"
                 else:
                     msg = f"✅ Sent to {sent} driver(s)." + (f" {failed} failed." if failed else "")

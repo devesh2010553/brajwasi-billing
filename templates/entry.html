@@ -407,84 +407,209 @@ dateInput.addEventListener('change', () => {
 });
 fetchLastClosing(dateInput.value);
 
-// ── Voice Input ──────────────────────────────────────────────────────────────
+// ── Voice Input: FREE Google/Chrome Web Speech API ──────────────────────────
 const voiceStatus = document.getElementById('voiceStatus');
-let activeRecorder = null;
-let activeBtn      = null;
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let activeRecognition = null;
+let activeBtn = null;
 
 function showStatus(html) { voiceStatus.className='show'; voiceStatus.innerHTML=html; }
 function hideStatus()     { voiceStatus.className=''; voiceStatus.innerHTML=''; }
 
-async function recordAndTranscribe(btn) {
-  const targetId = btn.dataset.target;
+function normalizeHindiText(text) {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[०-९]/g, d => '०१२३४५६७८९'.indexOf(d))
+    .replace(/[.,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-  if (activeBtn === btn && activeRecorder) { activeRecorder.stop(); return; }
-  if (activeRecorder) activeRecorder.stop();
+const digitMap = {
+  '0':'0','zero':'0','jiro':'0','शून्य':'0','सुन्य':'0','जीरो':'0',
+  '1':'1','one':'1','ek':'1','एक':'1',
+  '2':'2','two':'2','do':'2','du':'2','doo':'2','to':'2','दू':'2','दो':'2',
+  '3':'3','three':'3','teen':'3','tin':'3','तीन':'3',
+  '4':'4','four':'4','char':'4','chaar':'4','चार':'4',
+  '5':'5','five':'5','panch':'5','paanch':'5','पांच':'5','पाँच':'5',
+  '6':'6','six':'6','chhe':'6','che':'6','छे':'6','छह':'6',
+  '7':'7','seven':'7','saat':'7','sat':'7','सात':'7',
+  '8':'8','eight':'8','aath':'8','ath':'8','आठ':'8',
+  '9':'9','nine':'9','nau':'9','nav':'9','नौ':'9'
+};
 
-  try {
-    const stream   = await navigator.mediaDevices.getUserMedia({audio:true});
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
-    const recorder = new MediaRecorder(stream, {mimeType});
-    const chunks   = [];
+const valueMap = {
+  'zero':0,'jiro':0,'शून्य':0,'सुन्य':0,'जीरो':0,
+  'ek':1,'एक':1,'one':1,
+  'do':2,'du':2,'doo':2,'दू':2,'दो':2,'two':2,
+  'teen':3,'tin':3,'तीन':3,'three':3,
+  'char':4,'chaar':4,'चार':4,'four':4,
+  'panch':5,'paanch':5,'पांच':5,'पाँच':5,'five':5,
+  'chhe':6,'che':6,'छे':6,'छह':6,'six':6,
+  'saat':7,'sat':7,'सात':7,'seven':7,
+  'aath':8,'ath':8,'आठ':8,'eight':8,
+  'nau':9,'nav':9,'नौ':9,'nine':9,
+  'das':10,'दस':10,'gyarah':11,'ग्यारह':11,'barah':12,'बारह':12,'terah':13,'तेरह':13,
+  'chaudah':14,'चौदह':14,'pandrah':15,'पंद्रह':15,'solah':16,'सोलह':16,
+  'satrah':17,'सत्रह':17,'atharah':18,'अठारह':18,'unnis':19,'उन्नीस':19,
+  'bees':20,'बीस':20,'ikkees':21,'इक्कीस':21,'baees':22,'बाईस':22,'teis':23,'तेईस':23,
+  'chaubees':24,'चौबीस':24,'pachchees':25,'पच्चीस':25,'chhabbees':26,'छब्बीस':26,
+  'sattaees':27,'सत्ताईस':27,'athaees':28,'अट्ठाईस':28,'untees':29,'उनतीस':29,
+  'tees':30,'तीस':30,'battees':32,'बत्तीस':32,'chaalees':40,'चालीस':40,
+  'pachaas':50,'पचास':50,'saath':60,'साठ':60,'sattar':70,'सत्तर':70,
+  'assi':80,'अस्सी':80,'nabbe':90,'नब्बे':90,'ninyanve':99,'ninyaanve':99,'निन्यानवे':99
+};
 
-    activeRecorder = recorder; activeBtn = btn;
-    btn.classList.add('recording'); btn.textContent = '⏹️';
-    showStatus('🎙️ <b>Recording...</b> बोलें — रोकने के लिए दोबारा टैप करें');
+function tokenize(text) {
+  return normalizeHindiText(text).match(/[a-zA-Zअ-ह0-9:]+/g) || [];
+}
 
-    recorder.ondataavailable = e => { if (e.data.size>0) chunks.push(e.data); };
-
-    recorder.onstop = async () => {
-      stream.getTracks().forEach(t=>t.stop());
-      activeRecorder=null; activeBtn=null;
-      btn.classList.remove('recording'); btn.classList.add('processing'); btn.textContent='⏳';
-      showStatus('⏳ Processing... समझ रहे हैं...');
-
-      try {
-        const blob     = new Blob(chunks, {type: mimeType});
-        const formData = new FormData();
-        formData.append('audio', blob, 'rec.' + (mimeType.includes('mp4') ? 'mp4' : 'webm'));
-
-        const res  = await fetch('/transcribe', {method:'POST', body: formData});
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-
-        const parsed = data.parsed;
-        const raw    = data.raw;
-
-        if (!parsed) {
-          showStatus(`<span class="verror">❌ समझ नहीं आया — दोबारा बोलें</span><br><small class="raw">"${raw}"</small>`);
-          btn.classList.remove('processing'); btn.textContent='🎤';
-          setTimeout(hideStatus, 4000); return;
-        }
-
-        const field = document.getElementById(targetId);
-        field.value = parsed;
-        field.classList.add('filled');
-        field.dispatchEvent(new Event('input'));
-
-        showStatus(`<span class="vresult">✅ ${parsed}</span> &nbsp;<small class="raw">"${raw}"</small>`);
-        btn.classList.remove('processing'); btn.classList.add('success'); btn.textContent='✅';
-        setTimeout(() => { btn.classList.remove('success'); btn.textContent='🎤'; hideStatus(); }, 3000);
-
-      } catch(err) {
-        showStatus(`<span class="verror">❌ ${err.message}</span>`);
-        btn.classList.remove('processing'); btn.textContent='🎤';
-        setTimeout(hideStatus, 4000);
-      }
-    };
-
-    recorder.start();
-    setTimeout(() => { if (recorder.state==='recording') recorder.stop(); }, 10000);
-
-  } catch(err) {
-    btn.textContent='🎤';
-    showStatus('<span class="verror">❌ Mic access denied — माइक की अनुमति दें</span>');
-    setTimeout(hideStatus, 3000);
+function parseDigitChain(tokens) {
+  const filtered = tokens.filter(t => !['km','किलोमीटर','number','नंबर','hai','है'].includes(t));
+  if (filtered.length < 2) return null;
+  const digits = [];
+  for (const t of filtered) {
+    if (/^\d+$/.test(t)) digits.push(t);
+    else if (digitMap[t] !== undefined) digits.push(digitMap[t]);
+    else return null;
   }
+  return digits.join('');
+}
+
+function parseIndianNumber(tokens) {
+  const multiplierWords = new Set(['sau','सो','सौ','hazaar','hazar','हजार','हज़ार','lakh','laakh','लाख','crore','करोड़']);
+  if (!tokens.some(t => multiplierWords.has(t))) return null;
+
+  let total = 0, current = 0;
+  for (const t of tokens) {
+    if (/^\d+$/.test(t)) { current += parseInt(t, 10); continue; }
+    if (valueMap[t] !== undefined) { current += valueMap[t]; continue; }
+    if (t === 'sau' || t === 'सो' || t === 'सौ') { current = (current || 1) * 100; continue; }
+    if (['hazaar','hazar','हजार','हज़ार'].includes(t)) { total += (current || 1) * 1000; current = 0; continue; }
+    if (['lakh','laakh','लाख'].includes(t)) { total += (current || 1) * 100000; current = 0; continue; }
+    if (['crore','करोड़'].includes(t)) { total += (current || 1) * 10000000; current = 0; continue; }
+  }
+  return total + current ? String(total + current) : null;
+}
+
+function parseSpokenTime(tokens, rawText) {
+  let raw = normalizeHindiText(rawText);
+  const hasTimeWord = /(baje|बजे|bajkar|बजकर|minute|मिनट|subah|सुबह|shaam|शाम|raat|रात|dopahar|दोपहर|am|pm|:)/.test(raw);
+  if (!hasTimeWord) return null;
+
+  const colon = raw.match(/(\d{1,2})\s*:\s*(\d{1,2})\s*(am|pm|ए एम|पी एम)?/);
+  if (colon) {
+    let h = parseInt(colon[1],10), m = parseInt(colon[2],10);
+    if (/(pm|पी एम)/.test(colon[3] || '') && h < 12) h += 12;
+    if (/(am|ए एम)/.test(colon[3] || '') && h === 12) h = 0;
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  }
+
+  function val(t){ return /^\d+$/.test(t) ? parseInt(t,10) : valueMap[t]; }
+  let h = null, m = 0;
+
+  if (raw.includes('dhaai') || raw.includes('ढाई')) { h = 2; m = 30; }
+  const specialIndex = tokens.findIndex(t => ['saade','साढ़े','sade','paune','पौने','sawa','सवा'].includes(t));
+  if (specialIndex >= 0 && tokens[specialIndex+1]) {
+    const next = val(tokens[specialIndex+1]);
+    if (next != null) {
+      if (['saade','साढ़े','sade'].includes(tokens[specialIndex])) { h = next; m = 30; }
+      if (['sawa','सवा'].includes(tokens[specialIndex])) { h = next; m = 15; }
+      if (['paune','पौने'].includes(tokens[specialIndex])) { h = next - 1; m = 45; }
+    }
+  }
+
+  if (h == null) {
+    for (let i=0; i<tokens.length; i++) {
+      if (['baje','बजे','bajkar','बजकर'].includes(tokens[i]) && i > 0) { h = val(tokens[i-1]); }
+      if (['minute','मिनट'].includes(tokens[i]) && i > 0) { m = val(tokens[i-1]) || 0; }
+    }
+  }
+  if (h == null) {
+    const firstNum = tokens.map(val).find(v => Number.isInteger(v));
+    if (firstNum != null) h = firstNum;
+  }
+  if (h == null) return null;
+
+  const pm = /(pm|पी एम|shaam|शाम|raat|रात)/.test(raw);
+  const afternoon = /(dopahar|दोपहर)/.test(raw);
+  const am = /(am|ए एम|subah|सुबह)/.test(raw);
+  if ((pm || afternoon) && h < 12) h += 12;
+  if (am && h === 12) h = 0;
+  if (h < 0) h += 12;
+  if (h > 23 || m > 59) return null;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+
+function parseSpeechText(raw, type) {
+  const tokens = tokenize(raw);
+  if (!tokens.length) return null;
+  if (type === 'time') return parseSpokenTime(tokens, raw);
+  const digitChain = parseDigitChain(tokens);
+  if (digitChain) return digitChain;
+  const indian = parseIndianNumber(tokens);
+  if (indian) return indian;
+  const numeric = normalizeHindiText(raw).match(/\d+/g);
+  return numeric ? numeric.join('') : null;
+}
+
+function startGoogleVoice(btn) {
+  const targetId = btn.dataset.target;
+  const type = btn.dataset.type;
+  if (!SpeechRecognition) {
+    showStatus('<span class="verror">❌ Chrome voice support नहीं मिला. Chrome/Edge browser use करें.</span>');
+    return;
+  }
+  if (activeRecognition) { activeRecognition.stop(); activeRecognition = null; return; }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'hi-IN';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 3;
+  activeRecognition = recognition; activeBtn = btn;
+  btn.classList.add('recording'); btn.textContent = '🎙️';
+  showStatus('🎙️ <b>Listening...</b> Hindi/Hinglish में बोलें');
+
+  recognition.onresult = (e) => {
+    const candidates = Array.from(e.results[0]).map(r => r.transcript);
+    let parsed = null, raw = candidates[0] || '';
+    for (const txt of candidates) {
+      parsed = parseSpeechText(txt, type);
+      if (parsed) { raw = txt; break; }
+    }
+
+    if (!parsed) {
+      showStatus(`<span class="verror">❌ समझ नहीं आया — दोबारा बोलें</span><br><small class="raw">"${raw}"</small>`);
+      return;
+    }
+
+    const field = document.getElementById(targetId);
+    field.value = parsed;
+    field.classList.add('filled');
+    field.dispatchEvent(new Event('input'));
+    showStatus(`<span class="vresult">✅ ${parsed}</span> &nbsp;<small class="raw">"${raw}"</small>`);
+  };
+
+  recognition.onerror = (e) => {
+    showStatus(`<span class="verror">❌ Voice error: ${e.error}. Mic permission allow करें.</span>`);
+  };
+
+  recognition.onend = () => {
+    if (activeBtn) {
+      activeBtn.classList.remove('recording');
+      activeBtn.classList.add('success');
+      activeBtn.textContent = '🎤';
+      setTimeout(() => { activeBtn && activeBtn.classList.remove('success'); hideStatus(); }, 3000);
+    }
+    activeRecognition = null; activeBtn = null;
+  };
+
+  recognition.start();
 }
 
 document.querySelectorAll('.mic-btn').forEach(btn => {
-  btn.addEventListener('click', () => recordAndTranscribe(btn));
+  btn.addEventListener('click', () => startGoogleVoice(btn));
 });
 
 // ── Form submit ──────────────────────────────────────────────────────────────
