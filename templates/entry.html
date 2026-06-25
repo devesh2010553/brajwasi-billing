@@ -566,51 +566,100 @@ function parseIndianNumber(tokens) {
 }
 
 function parseSpokenTime(tokens, rawText) {
-  let raw = normalizeHindiText(rawText);
-  const hasTimeWord = /(baje|बजे|bajkar|बजकर|minute|मिनट|subah|सुबह|shaam|शाम|raat|रात|dopahar|दोपहर|am|pm|:)/.test(raw);
+  let raw = normalizeHindiText(rawText || '');
+  const rawLower = raw.toLowerCase();
+
+  const hasPM =
+    rawLower.includes('pm') || rawLower.includes('p.m') ||
+    rawLower.includes('पीएम') || rawLower.includes('पी एम') ||
+    rawLower.includes('shaam') || rawLower.includes('sham') || rawLower.includes('शाम') ||
+    rawLower.includes('raat') || rawLower.includes('rat') || rawLower.includes('रात') ||
+    rawLower.includes('night');
+
+  const hasAM =
+    rawLower.includes('am') || rawLower.includes('a.m') ||
+    rawLower.includes('एएम') || rawLower.includes('ए एम') ||
+    rawLower.includes('subah') || rawLower.includes('सुबह') ||
+    rawLower.includes('morning') || rawLower.includes('sawere') || rawLower.includes('savere');
+
+  const hasAfternoon =
+    rawLower.includes('dopahar') || rawLower.includes('दोपहर') || rawLower.includes('afternoon');
+
+  const hasTimeWord =
+    hasPM || hasAM || hasAfternoon ||
+    /(baje|बजे|bajkar|बजकर|minute|मिनट|मिनिट|:)/i.test(rawLower);
+
   if (!hasTimeWord) return null;
 
-  const colon = raw.match(/(\d{1,2})\s*:\s*(\d{1,2})\s*(am|pm|ए एम|पी एम)?/);
+  function val(t) {
+    if (/^\d+$/.test(t)) return parseInt(t, 10);
+    return valueMap[t];
+  }
+
+  function applyMeridiem(hour) {
+    let h = hour;
+    // If user says 22 pm or 18 pm, keep it as 24-hour time.
+    if ((hasPM || hasAfternoon) && h >= 1 && h <= 11) h += 12;
+    if (hasAM && h === 12) h = 0;
+    return h;
+  }
+
+  let h = null;
+  let m = 0;
+
+  // Handles: 6:00 pm, 6.00 pm, 6:00, 18:00, and Chrome transcript "6:00 p.m."
+  let colon = rawLower.match(/(\d{1,2})\s*[:.]\s*(\d{1,2})/);
   if (colon) {
-    let h = parseInt(colon[1],10), m = parseInt(colon[2],10);
-    if (/(pm|पी एम)/.test(colon[3] || '') && h < 12) h += 12;
-    if (/(am|ए एम)/.test(colon[3] || '') && h === 12) h = 0;
+    h = parseInt(colon[1], 10);
+    m = parseInt(colon[2], 10);
+    h = applyMeridiem(h);
+    if (h > 23 || m > 59) return null;
     return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
   }
 
-  function val(t){ return /^\d+$/.test(t) ? parseInt(t,10) : valueMap[t]; }
-  let h = null, m = 0;
+  // Special Hindi time words.
+  if (rawLower.includes('dhaai') || rawLower.includes('ढाई')) {
+    h = 2;
+    m = 30;
+  }
 
-  if (raw.includes('dhaai') || raw.includes('ढाई')) { h = 2; m = 30; }
-  const specialIndex = tokens.findIndex(t => ['saade','साढ़े','sade','paune','पौने','sawa','सवा'].includes(t));
-  if (specialIndex >= 0 && tokens[specialIndex+1]) {
-    const next = val(tokens[specialIndex+1]);
+  const specialIndex = tokens.findIndex(t => ['saade','साढ़े','साडे','sade','paune','पौने','पौन','sawa','सवा'].includes(t));
+  if (specialIndex >= 0 && tokens[specialIndex + 1]) {
+    const next = val(tokens[specialIndex + 1]);
     if (next != null) {
-      if (['saade','साढ़े','sade'].includes(tokens[specialIndex])) { h = next; m = 30; }
-      if (['sawa','सवा'].includes(tokens[specialIndex])) { h = next; m = 15; }
-      if (['paune','पौने'].includes(tokens[specialIndex])) { h = next - 1; m = 45; }
+      const sp = tokens[specialIndex];
+      if (['saade','साढ़े','साडे','sade'].includes(sp)) { h = next; m = 30; }
+      if (['sawa','सवा'].includes(sp)) { h = next; m = 15; }
+      if (['paune','पौने','पौन'].includes(sp)) { h = next - 1; m = 45; }
     }
   }
 
+  // Handles: raat ke 6 baje, 10 pm, shaam 7 baje, subah 8 baje.
   if (h == null) {
-    for (let i=0; i<tokens.length; i++) {
-      if (['baje','बजे','bajkar','बजकर'].includes(tokens[i]) && i > 0) { h = val(tokens[i-1]); }
-      if (['minute','मिनट'].includes(tokens[i]) && i > 0) { m = val(tokens[i-1]) || 0; }
+    for (let i = 0; i < tokens.length; i++) {
+      if (['baje','बजे','bajkar','बजकर'].includes(tokens[i]) && i > 0) {
+        const before = val(tokens[i - 1]);
+        if (before != null) h = before;
+      }
+      if (['minute','मिनट','मिनिट'].includes(tokens[i]) && i > 0) {
+        m = val(tokens[i - 1]) || 0;
+      }
     }
   }
+
+  // Handles direct speech: "6 pm", "10 p m", "raat 6".
   if (h == null) {
     const firstNum = tokens.map(val).find(v => Number.isInteger(v));
     if (firstNum != null) h = firstNum;
   }
+
   if (h == null) return null;
 
-  const pm = /(pm|p\.?m\.?|पीएम|पी एम|shaam|sham|शाम|raat|rat|रात|night)/.test(raw);
-  const afternoon = /(dopahar|दोपहर)/.test(raw);
-  const am = /(am|a\.?m\.?|एएम|ए एम|subah|सुबह|morning|sawere|savere)/.test(raw);
-  if ((pm || afternoon) && h < 12) h += 12;
-  if (am && h === 12) h = 0;
+  h = applyMeridiem(h);
+
   if (h < 0) h += 12;
   if (h > 23 || m > 59) return null;
+
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
 }
 

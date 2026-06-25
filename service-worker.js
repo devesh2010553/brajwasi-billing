@@ -1,4 +1,4 @@
-const CACHE_NAME = "brajwasi-v6";
+const CACHE_NAME = "brajwasi-v12";
 
 const ASSETS = [
   "/",
